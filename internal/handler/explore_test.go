@@ -1,0 +1,433 @@
+package handler
+
+import (
+	"context"
+	"fmt"
+	"strconv"
+	"testing"
+	"time"
+
+	"exploreService/internal/model"
+	"exploreService/pb"
+
+	"gorm.io/driver/sqlite"
+	"gorm.io/gorm"
+)
+
+// setupTestDB initializes a lightning-fast in-memory SQLite database
+// and runs auto-migration for isolated unit testing.
+func setupTestDB(t *testing.T) *gorm.DB {
+	// Use t.Name() as the DB name so each test
+	// gets its own isolated in-memory instance
+	dsn := fmt.Sprintf("file:%s?mode=memory&cache=private", t.Name())
+	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
+	if err != nil {
+		t.Fatalf("failed to connect to in-memory sqlite db: %v", err)
+	}
+
+	// Migrate the schema just like we do in production Postgres
+	err = db.AutoMigrate(&model.Decision{})
+	if err != nil {
+		t.Fatalf("failed to migrate test db schema: %v", err)
+	}
+
+	// Close the connection after the test completes to release the in-memory DB
+	t.Cleanup(func() {
+		sqlDB, _ := db.DB()
+		sqlDB.Close()
+	})
+
+	return db
+}
+
+// ==============================================================================
+// CASE A: Decision Overwrite Test
+// ==============================================================================
+// This test ensures that when an actor changes their mind and submits a new
+// decision for the same recipient, the old record is elegantly overwritten (Upsert)
+// rather than duplicating rows or throwing a unique constraint error.
+func TestPutDecision_Overwrite(t *testing.T) {
+	// 1. Setup isolated test environment
+	db := setupTestDB(t)
+	h := NewExploreHandler(db)
+	ctx := context.Background()
+
+	actorID := "user_alice"
+	recipientID := "user_bob"
+
+	// 2. First Decision: Alice PASSES Bob (LikedRecipient = false)
+	firstReq := &pb.PutDecisionRequest{
+		ActorUserId:     actorID,
+		RecipientUserId: recipientID,
+		LikedRecipient:  false,
+	}
+
+	firstResp, err := h.PutDecision(ctx, firstReq)
+	if err != nil {
+		t.Fatalf("First PutDecision failed: %v", err)
+	}
+	if firstResp.GetMutualLikes() {
+		t.Errorf("Expected MutualLikes to be false on first pass, got true")
+	}
+
+	// Verify database state after first decision
+	var count int64
+	db.Model(&model.Decision{}).Where("actor_user_id = ? AND recipient_user_id = ?", actorID, recipientID).Count(&count)
+	if count != 1 {
+		t.Errorf("Expected exactly 1 decision row in DB, found %d", count)
+	}
+
+	var savedDecision model.Decision
+	db.Where("actor_user_id = ? AND recipient_user_id = ?", actorID, recipientID).First(&savedDecision)
+	if savedDecision.LikedRecipient {
+		t.Errorf("Expected LikedRecipient to be false, got true")
+	}
+
+	// 3. Second Decision (Overwrite): Alice changes her mind and LIKES Bob (LikedRecipient = true)
+	secondReq := &pb.PutDecisionRequest{
+		ActorUserId:     actorID,
+		RecipientUserId: recipientID,
+		LikedRecipient:  true,
+	}
+
+	secondResp, err := h.PutDecision(ctx, secondReq)
+	if err != nil {
+		t.Fatalf("Second PutDecision (overwrite) failed: %v", err)
+	}
+	if secondResp.GetMutualLikes() {
+		t.Errorf("Expected MutualLikes to still be false (Bob hasn't liked back yet), got true")
+	}
+
+	// 4. Critical Verifications for Overwrite Behavior
+	// Total rows for this pair must STILL be exactly 1 (No duplicate records!)
+	db.Model(&model.Decision{}).Where("actor_user_id = ? AND recipient_user_id = ?", actorID, recipientID).Count(&count)
+	if count != 1 {
+		t.Errorf("Overwrite failed: Expected exactly 1 row in DB, but found %d (records duplicated!)", count)
+	}
+
+	// The value inside that 1 row must be updated to true
+	db.Where("actor_user_id = ? AND recipient_user_id = ?", actorID, recipientID).First(&savedDecision)
+	if !savedDecision.LikedRecipient {
+		t.Errorf("Update failed: Expected LikedRecipient to be overwritten to true, but remained false")
+	}
+}
+
+// ==============================================================================
+// CASE B: Mutual Like Detection Test
+// ==============================================================================
+// This test verifies the match-making engine. When User B likes User A,
+// and subsequently User A likes User B, the system must instantly detect
+// this overlap and return MutualLikes = true in the gRPC response.
+func TestPutDecision_MutualLikeDetection(t *testing.T) {
+	// 1. Setup isolated test environment
+	db := setupTestDB(t)
+	h := NewExploreHandler(db)
+	ctx := context.Background()
+
+	userA := "user_alpha"
+	userB := "user_beta"
+
+	// 2. Step 1: User B LIKES User A first
+	// We seed this directly into the DB to represent an existing historical state
+	historicalLike := model.Decision{
+		ActorUserID:     userB,
+		RecipientUserID: userA,
+		LikedRecipient:  true,
+	}
+	if err := db.Create(&historicalLike).Error; err != nil {
+		t.Fatalf("failed to seed historical like from B to A: %v", err)
+	}
+
+	// 3. Step 2: User A now LIKES User B via gRPC call
+	req := &pb.PutDecisionRequest{
+		ActorUserId:     userA,
+		RecipientUserId: userB,
+		LikedRecipient:  true,
+	}
+
+	resp, err := h.PutDecision(ctx, req)
+	if err != nil {
+		t.Fatalf("PutDecision from A to B failed: %v", err)
+	}
+
+	// 4. Critical Verification
+	// Since both like each other now, MutualLikes MUST be true!
+	if !resp.GetMutualLikes() {
+		t.Errorf("Critical Match Defect: Expected MutualLikes to be true, but got false")
+	}
+
+	// 5. Edge Case Verification: What if A changes mind to PASS?
+	// If A later overwrites their decision to a "Pass", MutualLikes should no longer trigger.
+	passReq := &pb.PutDecisionRequest{
+		ActorUserId:     userA,
+		RecipientUserId: userB,
+		LikedRecipient:  false, // Changed mind to Pass
+	}
+
+	passResp, err := h.PutDecision(ctx, passReq)
+	if err != nil {
+		t.Fatalf("PutDecision overwrite to Pass failed: %v", err)
+	}
+
+	if passResp.GetMutualLikes() {
+		t.Errorf("Logic Error: MutualLikes triggered even though Actor chose to PASS")
+	}
+}
+
+// ==============================================================================
+// CASE C: Heavy User Cursor Pagination Test
+// ==============================================================================
+// This test challenges the scale requirement by simulating a user with multiple
+// likes. It verifies that ListLikedYou returns results in reverse chronological
+// order (newest first), properly generates an encoded NextPaginationToken, and
+// allows seamless paging without using performance-killing SQL OFFSETS.
+func TestListLikedYou_CursorPagination(t *testing.T) {
+	db := setupTestDB(t)
+	h := NewExploreHandler(db)
+	ctx := context.Background()
+
+	targetUser := "user_celebrity"
+
+	// 1. Seed 5 historical likes with distinct, ascending timestamps
+	// Likers: user_1 (oldest) -> user_5 (newest)
+	baseTime := time.Now().Truncate(time.Second)
+	for i := 1; i <= 5; i++ {
+		like := model.Decision{
+			ActorUserID:     "user_" + strconv.Itoa(i),
+			RecipientUserID: targetUser,
+			LikedRecipient:  true,
+			CreatedAt:       baseTime.Add(time.Duration(i) * time.Hour), // Each like is 1 hour newer
+		}
+		if err := db.Create(&like).Error; err != nil {
+			t.Fatalf("failed to seed pagination data: %v", err)
+		}
+	}
+
+	// Paginate with a page size of 2 to test multiple pages
+	pswithTwo := uint32(2)
+
+	// --------------------------------------------------------------------------
+	// PAGE 1: Fetch first 2 records (Should be user_5 and user_4)
+	// --------------------------------------------------------------------------
+
+	page1Req := &pb.ListLikedYouRequest{
+		RecipientUserId: targetUser,
+		PageSize:        &pswithTwo,
+	}
+
+	page1Resp, err := h.ListLikedYou(ctx, page1Req)
+	if err != nil {
+		t.Fatalf("Page 1 query failed: %v", err)
+	}
+
+	if len(page1Resp.GetLikers()) != 2 {
+		t.Fatalf("Expected 2 items on Page 1, got %d", len(page1Resp.GetLikers()))
+	}
+
+	// Must be newest first: user_5 then user_4
+	if page1Resp.GetLikers()[0].GetActorId() != "user_5" || page1Resp.GetLikers()[1].GetActorId() != "user_4" {
+		t.Errorf("Page 1 sort order incorrect. Expected [user_5, user_4], got [%s, %s]",
+			page1Resp.GetLikers()[0].GetActorId(), page1Resp.GetLikers()[1].GetActorId())
+	}
+
+	token1 := page1Resp.GetNextPaginationToken()
+	if token1 == "" {
+		t.Fatalf("Expected a valid NextPaginationToken on Page 1, got empty")
+	}
+
+	// --------------------------------------------------------------------------
+	// PAGE 2: Fetch next 2 records using token1 (Should be user_3 and user_2)
+	// --------------------------------------------------------------------------
+	page2Req := &pb.ListLikedYouRequest{
+		RecipientUserId: targetUser,
+		PageSize:        &pswithTwo,
+		PaginationToken: &token1,
+	}
+
+	page2Resp, err := h.ListLikedYou(ctx, page2Req)
+	if err != nil {
+		t.Fatalf("Page 2 query failed: %v", err)
+	}
+
+	if len(page2Resp.GetLikers()) != 2 {
+		t.Fatalf("Expected 2 items on Page 2, got %d", len(page2Resp.GetLikers()))
+	}
+
+	if page2Resp.GetLikers()[0].GetActorId() != "user_3" || page2Resp.GetLikers()[1].GetActorId() != "user_2" {
+		t.Errorf("Page 2 sort order incorrect. Expected [user_3, user_2], got [%s, %s]",
+			page2Resp.GetLikers()[0].GetActorId(), page2Resp.GetLikers()[1].GetActorId())
+	}
+
+	token2 := page2Resp.GetNextPaginationToken()
+
+	if token2 == "" {
+		t.Fatalf("Expected a valid NextPaginationToken on Page 2, got empty")
+	}
+
+	// --------------------------------------------------------------------------
+	// PAGE 3: Fetch final record using token2 (Should be user_1)
+	// --------------------------------------------------------------------------
+	page3Req := &pb.ListLikedYouRequest{
+		RecipientUserId: targetUser,
+		PageSize:        &pswithTwo,
+		PaginationToken: &token2,
+	}
+
+	page3Resp, err := h.ListLikedYou(ctx, page3Req)
+	if err != nil {
+		t.Fatalf("Page 3 query failed: %v", err)
+	}
+
+	if len(page3Resp.GetLikers()) != 1 {
+		t.Fatalf("Expected 1 final item on Page 3, got %d", len(page3Resp.GetLikers()))
+	}
+
+	if page3Resp.GetLikers()[0].GetActorId() != "user_1" {
+		t.Errorf("Page 3 item incorrect. Expected user_1, got %s", page3Resp.GetLikers()[0].GetActorId())
+	}
+
+	// Essential Check: Since there are no more records, NextPaginationToken MUST be nil!
+	if page3Resp.GetNextPaginationToken() != "" {
+		t.Errorf("Expected NextPaginationToken to be nil on the final page, but got a token")
+	}
+}
+
+// ==============================================================================
+// CASE D: New Liked You Exclusion Test
+// ==============================================================================
+// This test verifies that ListNewLikedYou only displays records of users who
+// liked the recipient, while strictly excluding individuals whom the recipient
+// has already liked back (Mutual Matches). This prevents redundant data on
+// incoming match feeds.
+func TestListNewLikedYou_ExclusionFilter(t *testing.T) {
+	db := setupTestDB(t)
+	h := NewExploreHandler(db)
+	ctx := context.Background()
+
+	targetUser := "user_recipient"
+
+	// Scene 1: user_new_liker LIKES targetUser (Target user has NOT reacted back yet)
+	newLiker := model.Decision{
+		ActorUserID:     "user_new_liker",
+		RecipientUserID: targetUser,
+		LikedRecipient:  true,
+		CreatedAt:       time.Now().Add(-2 * time.Hour),
+	}
+	if err := db.Create(&newLiker).Error; err != nil {
+		t.Fatalf("failed to seed new liker: %v", err)
+	}
+
+	// Scene 2: user_mutual_match LIKES targetUser, AND targetUser LIKES them back (Mutual Like)
+	mutualLiker := model.Decision{
+		ActorUserID:     "user_mutual_match",
+		RecipientUserID: targetUser,
+		LikedRecipient:  true,
+		CreatedAt:       time.Now().Add(-1 * time.Hour),
+	}
+	if err := db.Create(&mutualLiker).Error; err != nil {
+		t.Fatalf("failed to seed mutual liker: %v", err)
+	}
+
+	// The counter-decision (Target user liking user_mutual_match back)
+	targetLikeBack := model.Decision{
+		ActorUserID:     targetUser,
+		RecipientUserID: "user_mutual_match",
+		LikedRecipient:  true,
+		CreatedAt:       time.Now(),
+	}
+	if err := db.Create(&targetLikeBack).Error; err != nil {
+		t.Fatalf("failed to seed target user counter-like: %v", err)
+	}
+
+	// --------------------------------------------------------------------------
+	// EXECUTE QUERY & VERIFY
+	// --------------------------------------------------------------------------
+
+	// Set a large page size to ensure we get all potential likers in one response
+	pswith10 := uint32(10)
+
+	req := &pb.ListLikedYouRequest{
+		RecipientUserId: targetUser,
+		PageSize:        &pswith10,
+	}
+
+	resp, err := h.ListNewLikedYou(ctx, req)
+	if err != nil {
+		t.Fatalf("ListNewLikedYou call failed: %v", err)
+	}
+
+	// Validation 1: The length of results must be EXACTLY 1
+	if len(resp.GetLikers()) != 1 {
+		t.Fatalf("Filter Error: Expected exactly 1 new liker, but found %d in response", len(resp.GetLikers()))
+	}
+
+	// Validation 2: The remaining user MUST be "user_new_liker"
+	remainingActor := resp.GetLikers()[0].GetActorId()
+	if remainingActor != "user_new_liker" {
+		t.Errorf("Filter Mismatch: Expected 'user_new_liker' to be present, but found '%s' instead. Mutual match was not filtered out!", remainingActor)
+	}
+}
+
+// ==============================================================================
+// CASE E: Accurate Counting & Noise Isolation Test
+// ==============================================================================
+// This test ensures that CountLikedYou returns a 100% precise calculation.
+// It injects various database noises (such as pass decisions and likes directed
+// to other users) and verifies that the counter filters them out completely,
+// leveraging the optimized database indexes.
+func TestCountLikedYou_NoiseIsolation(t *testing.T) {
+	db := setupTestDB(t)
+	h := NewExploreHandler(db)
+	ctx := context.Background()
+
+	targetUser := "user_popular"
+
+	// 1. Inject Valid Data: 2 distinct users LIKED targetUser
+	validLike1 := model.Decision{
+		ActorUserID:     "user_fan_a",
+		RecipientUserID: targetUser,
+		LikedRecipient:  true,
+	}
+	validLike2 := model.Decision{
+		ActorUserID:     "user_fan_b",
+		RecipientUserID: targetUser,
+		LikedRecipient:  true,
+	}
+	_ = db.Create(&validLike1)
+	_ = db.Create(&validLike2)
+
+	// 2. Inject Noise Type 1: A user PASSED targetUser (LikedRecipient = false)
+	passNoise := model.Decision{
+		ActorUserID:     "user_hater",
+		RecipientUserID: targetUser,
+		LikedRecipient:  false, // This is a PASS, should NOT be counted!
+	}
+	_ = db.Create(&passNoise)
+
+	// 3. Inject Noise Type 2: A user LIKED someone else entirely
+	wrongTargetNoise := model.Decision{
+		ActorUserID:     "user_fan_c",
+		RecipientUserID: "user_someone_else", // Different recipient, should NOT be counted!
+		LikedRecipient:  true,
+	}
+	_ = db.Create(&wrongTargetNoise)
+
+	// --------------------------------------------------------------------------
+	// EXECUTE COUNTER & VERIFY
+	// --------------------------------------------------------------------------
+	req := &pb.CountLikedYouRequest{
+		RecipientUserId: targetUser,
+	}
+
+	resp, err := h.CountLikedYou(ctx, req)
+	if err != nil {
+		t.Fatalf("CountLikedYou call failed: %v", err)
+	}
+
+	// Critical Assertion: The total count MUST be exactly 2, ignoring all noise records.
+	expectedCount := uint64(2)
+	if resp.GetCount() != expectedCount {
+		t.Errorf("Counting Error: Expected exactly %d likes for '%s', but got %d instead. Database noise leaked into the count!",
+			expectedCount, targetUser, resp.GetCount())
+	}
+}
