@@ -33,8 +33,12 @@ jobs:
       - name: Go Vet
         run: go vet ./...
 
-      # Execute your test suite (including explore_test.go)
-      # We enable the race detector (-race) because this is a highly concurrent service.
-      # We also track code coverage (-cover).
-      - name: Run Tests
-        run: go test -v -race -cover ./...
+      # Execute unit tests suite (including explore_test.go) with the race detector enabled to verify concurrency safety
+      - name: Run Tests with Race Detector
+        run: go test -v -race ./...
+      
+      # Execute code coverage separately to avoid toolchain version conflicts with the race detector
+      - name: Run Coverage
+        env:
+          GOTOOLCHAIN: local # Force Go to use the fully-featured local runner environment to prevent toolchain bugs
+        run: go test -coverprofile=coverage.txt -covermode=atomic ./...
