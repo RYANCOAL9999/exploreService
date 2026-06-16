@@ -1,0 +1,40 @@
+# This workflow will build a golang project
+# For more information see: https://docs.github.com/en/actions/automating-builds-and-tests/building-and-testing-go
+
+name: Explore Service CI Pipeline
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+    
+jobs:
+  test:
+    name: Run Unit Tests
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      # Set up the exact Go environment required by the spec
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+          cache: true # Caches go modules automatically to speed up subsequent runs
+
+      # Ensure go.mod and go.sum are tidy and consistent
+      - name: Verify Dependencies
+        run: go mod verify
+
+      # Run static analysis to catch common structural/syntax issues early
+      - name: Go Vet
+        run: go vet ./...
+
+      # Execute your test suite (including explore_test.go)
+      # We enable the race detector (-race) because this is a highly concurrent service.
+      # We also track code coverage (-cover).
+      - name: Run Tests
+        run: go test -v -race -cover ./...
