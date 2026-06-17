@@ -23,6 +23,7 @@ const (
 	ExploreService_ListNewLikedYou_FullMethodName = "/explore.ExploreService/ListNewLikedYou"
 	ExploreService_CountLikedYou_FullMethodName   = "/explore.ExploreService/CountLikedYou"
 	ExploreService_PutDecision_FullMethodName     = "/explore.ExploreService/PutDecision"
+	ExploreService_MutualLikes_FullMethodName     = "/explore.ExploreService/MutualLikes"
 )
 
 // ExploreServiceClient is the client API for ExploreService service.
@@ -32,7 +33,8 @@ type ExploreServiceClient interface {
 	ListLikedYou(ctx context.Context, in *ListLikedYouRequest, opts ...grpc.CallOption) (*ListLikedYouResponse, error)
 	ListNewLikedYou(ctx context.Context, in *ListLikedYouRequest, opts ...grpc.CallOption) (*ListLikedYouResponse, error)
 	CountLikedYou(ctx context.Context, in *CountLikedYouRequest, opts ...grpc.CallOption) (*CountLikedYouResponse, error)
-	PutDecision(ctx context.Context, in *PutDecisionRequest, opts ...grpc.CallOption) (*PutDecisionResponse, error)
+	PutDecision(ctx context.Context, in *DecisionRequest, opts ...grpc.CallOption) (*PutDecisionResponse, error)
+	MutualLikes(ctx context.Context, in *DecisionRequest, opts ...grpc.CallOption) (*MutualLikesResponse, error)
 }
 
 type exploreServiceClient struct {
@@ -73,10 +75,20 @@ func (c *exploreServiceClient) CountLikedYou(ctx context.Context, in *CountLiked
 	return out, nil
 }
 
-func (c *exploreServiceClient) PutDecision(ctx context.Context, in *PutDecisionRequest, opts ...grpc.CallOption) (*PutDecisionResponse, error) {
+func (c *exploreServiceClient) PutDecision(ctx context.Context, in *DecisionRequest, opts ...grpc.CallOption) (*PutDecisionResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(PutDecisionResponse)
 	err := c.cc.Invoke(ctx, ExploreService_PutDecision_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *exploreServiceClient) MutualLikes(ctx context.Context, in *DecisionRequest, opts ...grpc.CallOption) (*MutualLikesResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(MutualLikesResponse)
+	err := c.cc.Invoke(ctx, ExploreService_MutualLikes_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -90,7 +102,8 @@ type ExploreServiceServer interface {
 	ListLikedYou(context.Context, *ListLikedYouRequest) (*ListLikedYouResponse, error)
 	ListNewLikedYou(context.Context, *ListLikedYouRequest) (*ListLikedYouResponse, error)
 	CountLikedYou(context.Context, *CountLikedYouRequest) (*CountLikedYouResponse, error)
-	PutDecision(context.Context, *PutDecisionRequest) (*PutDecisionResponse, error)
+	PutDecision(context.Context, *DecisionRequest) (*PutDecisionResponse, error)
+	MutualLikes(context.Context, *DecisionRequest) (*MutualLikesResponse, error)
 	mustEmbedUnimplementedExploreServiceServer()
 }
 
@@ -110,8 +123,11 @@ func (UnimplementedExploreServiceServer) ListNewLikedYou(context.Context, *ListL
 func (UnimplementedExploreServiceServer) CountLikedYou(context.Context, *CountLikedYouRequest) (*CountLikedYouResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method CountLikedYou not implemented")
 }
-func (UnimplementedExploreServiceServer) PutDecision(context.Context, *PutDecisionRequest) (*PutDecisionResponse, error) {
+func (UnimplementedExploreServiceServer) PutDecision(context.Context, *DecisionRequest) (*PutDecisionResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method PutDecision not implemented")
+}
+func (UnimplementedExploreServiceServer) MutualLikes(context.Context, *DecisionRequest) (*MutualLikesResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method MutualLikes not implemented")
 }
 func (UnimplementedExploreServiceServer) mustEmbedUnimplementedExploreServiceServer() {}
 func (UnimplementedExploreServiceServer) testEmbeddedByValue()                        {}
@@ -189,7 +205,7 @@ func _ExploreService_CountLikedYou_Handler(srv interface{}, ctx context.Context,
 }
 
 func _ExploreService_PutDecision_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(PutDecisionRequest)
+	in := new(DecisionRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
@@ -201,7 +217,25 @@ func _ExploreService_PutDecision_Handler(srv interface{}, ctx context.Context, d
 		FullMethod: ExploreService_PutDecision_FullMethodName,
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(ExploreServiceServer).PutDecision(ctx, req.(*PutDecisionRequest))
+		return srv.(ExploreServiceServer).PutDecision(ctx, req.(*DecisionRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _ExploreService_MutualLikes_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(DecisionRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ExploreServiceServer).MutualLikes(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: ExploreService_MutualLikes_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ExploreServiceServer).MutualLikes(ctx, req.(*DecisionRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -228,6 +262,10 @@ var ExploreService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "PutDecision",
 			Handler:    _ExploreService_PutDecision_Handler,
+		},
+		{
+			MethodName: "MutualLikes",
+			Handler:    _ExploreService_MutualLikes_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

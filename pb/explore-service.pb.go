@@ -221,7 +221,7 @@ func (x *CountLikedYouResponse) GetCount() uint64 {
 	return 0
 }
 
-type PutDecisionRequest struct {
+type DecisionRequest struct {
 	state           protoimpl.MessageState `protogen:"open.v1"`
 	ActorUserId     string                 `protobuf:"bytes,1,opt,name=actor_user_id,json=actorUserId,proto3" json:"actor_user_id,omitempty"`
 	RecipientUserId string                 `protobuf:"bytes,2,opt,name=recipient_user_id,json=recipientUserId,proto3" json:"recipient_user_id,omitempty"`
@@ -230,20 +230,20 @@ type PutDecisionRequest struct {
 	sizeCache       protoimpl.SizeCache
 }
 
-func (x *PutDecisionRequest) Reset() {
-	*x = PutDecisionRequest{}
+func (x *DecisionRequest) Reset() {
+	*x = DecisionRequest{}
 	mi := &file_explore_service_proto_msgTypes[4]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *PutDecisionRequest) String() string {
+func (x *DecisionRequest) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*PutDecisionRequest) ProtoMessage() {}
+func (*DecisionRequest) ProtoMessage() {}
 
-func (x *PutDecisionRequest) ProtoReflect() protoreflect.Message {
+func (x *DecisionRequest) ProtoReflect() protoreflect.Message {
 	mi := &file_explore_service_proto_msgTypes[4]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -255,26 +255,26 @@ func (x *PutDecisionRequest) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use PutDecisionRequest.ProtoReflect.Descriptor instead.
-func (*PutDecisionRequest) Descriptor() ([]byte, []int) {
+// Deprecated: Use DecisionRequest.ProtoReflect.Descriptor instead.
+func (*DecisionRequest) Descriptor() ([]byte, []int) {
 	return file_explore_service_proto_rawDescGZIP(), []int{4}
 }
 
-func (x *PutDecisionRequest) GetActorUserId() string {
+func (x *DecisionRequest) GetActorUserId() string {
 	if x != nil {
 		return x.ActorUserId
 	}
 	return ""
 }
 
-func (x *PutDecisionRequest) GetRecipientUserId() string {
+func (x *DecisionRequest) GetRecipientUserId() string {
 	if x != nil {
 		return x.RecipientUserId
 	}
 	return ""
 }
 
-func (x *PutDecisionRequest) GetLikedRecipient() bool {
+func (x *DecisionRequest) GetLikedRecipient() bool {
 	if x != nil {
 		return x.LikedRecipient
 	}
@@ -283,7 +283,6 @@ func (x *PutDecisionRequest) GetLikedRecipient() bool {
 
 type PutDecisionResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	MutualLikes   bool                   `protobuf:"varint,1,opt,name=mutual_likes,json=mutualLikes,proto3" json:"mutual_likes,omitempty"` // True if both users like each other
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -318,7 +317,44 @@ func (*PutDecisionResponse) Descriptor() ([]byte, []int) {
 	return file_explore_service_proto_rawDescGZIP(), []int{5}
 }
 
-func (x *PutDecisionResponse) GetMutualLikes() bool {
+type MutualLikesResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	MutualLikes   bool                   `protobuf:"varint,1,opt,name=mutual_likes,json=mutualLikes,proto3" json:"mutual_likes,omitempty"` // True if both users like each other
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *MutualLikesResponse) Reset() {
+	*x = MutualLikesResponse{}
+	mi := &file_explore_service_proto_msgTypes[6]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *MutualLikesResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*MutualLikesResponse) ProtoMessage() {}
+
+func (x *MutualLikesResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_explore_service_proto_msgTypes[6]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use MutualLikesResponse.ProtoReflect.Descriptor instead.
+func (*MutualLikesResponse) Descriptor() ([]byte, []int) {
+	return file_explore_service_proto_rawDescGZIP(), []int{6}
+}
+
+func (x *MutualLikesResponse) GetMutualLikes() bool {
 	if x != nil {
 		return x.MutualLikes
 	}
@@ -335,7 +371,7 @@ type ListLikedYouResponse_Liker struct {
 
 func (x *ListLikedYouResponse_Liker) Reset() {
 	*x = ListLikedYouResponse_Liker{}
-	mi := &file_explore_service_proto_msgTypes[6]
+	mi := &file_explore_service_proto_msgTypes[7]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -347,7 +383,7 @@ func (x *ListLikedYouResponse_Liker) String() string {
 func (*ListLikedYouResponse_Liker) ProtoMessage() {}
 
 func (x *ListLikedYouResponse_Liker) ProtoReflect() protoreflect.Message {
-	mi := &file_explore_service_proto_msgTypes[6]
+	mi := &file_explore_service_proto_msgTypes[7]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -399,18 +435,20 @@ const file_explore_service_proto_rawDesc = "" +
 	"\x14CountLikedYouRequest\x12*\n" +
 	"\x11recipient_user_id\x18\x01 \x01(\tR\x0frecipientUserId\"-\n" +
 	"\x15CountLikedYouResponse\x12\x14\n" +
-	"\x05count\x18\x01 \x01(\x04R\x05count\"\x8d\x01\n" +
-	"\x12PutDecisionRequest\x12\"\n" +
+	"\x05count\x18\x01 \x01(\x04R\x05count\"\x8a\x01\n" +
+	"\x0fDecisionRequest\x12\"\n" +
 	"\ractor_user_id\x18\x01 \x01(\tR\vactorUserId\x12*\n" +
 	"\x11recipient_user_id\x18\x02 \x01(\tR\x0frecipientUserId\x12'\n" +
-	"\x0fliked_recipient\x18\x03 \x01(\bR\x0elikedRecipient\"8\n" +
-	"\x13PutDecisionResponse\x12!\n" +
-	"\fmutual_likes\x18\x01 \x01(\bR\vmutualLikes2\xc7\x02\n" +
+	"\x0fliked_recipient\x18\x03 \x01(\bR\x0elikedRecipient\"\x15\n" +
+	"\x13PutDecisionResponse\"8\n" +
+	"\x13MutualLikesResponse\x12!\n" +
+	"\fmutual_likes\x18\x01 \x01(\bR\vmutualLikes2\x8b\x03\n" +
 	"\x0eExploreService\x12K\n" +
 	"\fListLikedYou\x12\x1c.explore.ListLikedYouRequest\x1a\x1d.explore.ListLikedYouResponse\x12N\n" +
 	"\x0fListNewLikedYou\x12\x1c.explore.ListLikedYouRequest\x1a\x1d.explore.ListLikedYouResponse\x12N\n" +
-	"\rCountLikedYou\x12\x1d.explore.CountLikedYouRequest\x1a\x1e.explore.CountLikedYouResponse\x12H\n" +
-	"\vPutDecision\x12\x1b.explore.PutDecisionRequest\x1a\x1c.explore.PutDecisionResponseb\x06proto3"
+	"\rCountLikedYou\x12\x1d.explore.CountLikedYouRequest\x1a\x1e.explore.CountLikedYouResponse\x12E\n" +
+	"\vPutDecision\x12\x18.explore.DecisionRequest\x1a\x1c.explore.PutDecisionResponse\x12E\n" +
+	"\vMutualLikes\x12\x18.explore.DecisionRequest\x1a\x1c.explore.MutualLikesResponseb\x06proto3"
 
 var (
 	file_explore_service_proto_rawDescOnce sync.Once
@@ -424,28 +462,31 @@ func file_explore_service_proto_rawDescGZIP() []byte {
 	return file_explore_service_proto_rawDescData
 }
 
-var file_explore_service_proto_msgTypes = make([]protoimpl.MessageInfo, 7)
+var file_explore_service_proto_msgTypes = make([]protoimpl.MessageInfo, 8)
 var file_explore_service_proto_goTypes = []any{
 	(*ListLikedYouRequest)(nil),        // 0: explore.ListLikedYouRequest
 	(*ListLikedYouResponse)(nil),       // 1: explore.ListLikedYouResponse
 	(*CountLikedYouRequest)(nil),       // 2: explore.CountLikedYouRequest
 	(*CountLikedYouResponse)(nil),      // 3: explore.CountLikedYouResponse
-	(*PutDecisionRequest)(nil),         // 4: explore.PutDecisionRequest
+	(*DecisionRequest)(nil),            // 4: explore.DecisionRequest
 	(*PutDecisionResponse)(nil),        // 5: explore.PutDecisionResponse
-	(*ListLikedYouResponse_Liker)(nil), // 6: explore.ListLikedYouResponse.Liker
+	(*MutualLikesResponse)(nil),        // 6: explore.MutualLikesResponse
+	(*ListLikedYouResponse_Liker)(nil), // 7: explore.ListLikedYouResponse.Liker
 }
 var file_explore_service_proto_depIdxs = []int32{
-	6, // 0: explore.ListLikedYouResponse.likers:type_name -> explore.ListLikedYouResponse.Liker
+	7, // 0: explore.ListLikedYouResponse.likers:type_name -> explore.ListLikedYouResponse.Liker
 	0, // 1: explore.ExploreService.ListLikedYou:input_type -> explore.ListLikedYouRequest
 	0, // 2: explore.ExploreService.ListNewLikedYou:input_type -> explore.ListLikedYouRequest
 	2, // 3: explore.ExploreService.CountLikedYou:input_type -> explore.CountLikedYouRequest
-	4, // 4: explore.ExploreService.PutDecision:input_type -> explore.PutDecisionRequest
-	1, // 5: explore.ExploreService.ListLikedYou:output_type -> explore.ListLikedYouResponse
-	1, // 6: explore.ExploreService.ListNewLikedYou:output_type -> explore.ListLikedYouResponse
-	3, // 7: explore.ExploreService.CountLikedYou:output_type -> explore.CountLikedYouResponse
-	5, // 8: explore.ExploreService.PutDecision:output_type -> explore.PutDecisionResponse
-	5, // [5:9] is the sub-list for method output_type
-	1, // [1:5] is the sub-list for method input_type
+	4, // 4: explore.ExploreService.PutDecision:input_type -> explore.DecisionRequest
+	4, // 5: explore.ExploreService.MutualLikes:input_type -> explore.DecisionRequest
+	1, // 6: explore.ExploreService.ListLikedYou:output_type -> explore.ListLikedYouResponse
+	1, // 7: explore.ExploreService.ListNewLikedYou:output_type -> explore.ListLikedYouResponse
+	3, // 8: explore.ExploreService.CountLikedYou:output_type -> explore.CountLikedYouResponse
+	5, // 9: explore.ExploreService.PutDecision:output_type -> explore.PutDecisionResponse
+	6, // 10: explore.ExploreService.MutualLikes:output_type -> explore.MutualLikesResponse
+	6, // [6:11] is the sub-list for method output_type
+	1, // [1:6] is the sub-list for method input_type
 	1, // [1:1] is the sub-list for extension type_name
 	1, // [1:1] is the sub-list for extension extendee
 	0, // [0:1] is the sub-list for field type_name
@@ -464,7 +505,7 @@ func file_explore_service_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_explore_service_proto_rawDesc), len(file_explore_service_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   7,
+			NumMessages:   8,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

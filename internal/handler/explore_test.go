@@ -56,18 +56,16 @@ func TestPutDecision_Overwrite(t *testing.T) {
 	recipientID := "user_bob"
 
 	// 2. First Decision: Alice PASSES Bob (LikedRecipient = false)
-	firstReq := &pb.PutDecisionRequest{
+	firstReq := &pb.DecisionRequest{
 		ActorUserId:     actorID,
 		RecipientUserId: recipientID,
 		LikedRecipient:  false,
 	}
 
-	firstResp, err := h.PutDecision(ctx, firstReq)
+	_, err := h.PutDecision(ctx, firstReq)
+
 	if err != nil {
 		t.Fatalf("First PutDecision failed: %v", err)
-	}
-	if firstResp.GetMutualLikes() {
-		t.Errorf("Expected MutualLikes to be false on first pass, got true")
 	}
 
 	// Verify database state after first decision
@@ -84,18 +82,15 @@ func TestPutDecision_Overwrite(t *testing.T) {
 	}
 
 	// 3. Second Decision (Overwrite): Alice changes her mind and LIKES Bob (LikedRecipient = true)
-	secondReq := &pb.PutDecisionRequest{
+	secondReq := &pb.DecisionRequest{
 		ActorUserId:     actorID,
 		RecipientUserId: recipientID,
 		LikedRecipient:  true,
 	}
 
-	secondResp, err := h.PutDecision(ctx, secondReq)
+	_, err = h.PutDecision(ctx, secondReq)
 	if err != nil {
 		t.Fatalf("Second PutDecision (overwrite) failed: %v", err)
-	}
-	if secondResp.GetMutualLikes() {
-		t.Errorf("Expected MutualLikes to still be false (Bob hasn't liked back yet), got true")
 	}
 
 	// 4. Critical Verifications for Overwrite Behavior
@@ -110,6 +105,26 @@ func TestPutDecision_Overwrite(t *testing.T) {
 	if !savedDecision.LikedRecipient {
 		t.Errorf("Update failed: Expected LikedRecipient to be overwritten to true, but remained false")
 	}
+
+	// 5. Verification for MutualLikes status
+	// We set LikedRecipient = true here to pass the handler's outer guard clause,
+	// allowing the system to query the DB and confirm that Bob hasn't liked Alice back yet.
+	mutualReq := &pb.DecisionRequest{
+		ActorUserId:     actorID,
+		RecipientUserId: recipientID,
+		LikedRecipient:  true,
+	}
+
+	mutualResp, err := h.MutualLikes(ctx, mutualReq)
+	if err != nil {
+		t.Fatalf("MutualLikes check failed: %v", err)
+	}
+
+	// Since Bob hasn't liked Alice back yet, MutualLikes must be false
+	if mutualResp.GetMutualLikes() {
+		t.Errorf("Expected MutualLikes to be false (Bob hasn't liked back yet), got true")
+	}
+
 }
 
 // ==============================================================================
@@ -139,43 +154,57 @@ func TestPutDecision_MutualLikeDetection(t *testing.T) {
 	}
 
 	// 3. Step 2: User A now LIKES User B via gRPC call
-	req := &pb.PutDecisionRequest{
+	reqA := &pb.DecisionRequest{
 		ActorUserId:     userA,
 		RecipientUserId: userB,
 		LikedRecipient:  true,
 	}
 
-	resp, err := h.PutDecision(ctx, req)
+	_, err := h.PutDecision(ctx, reqA)
 	if err != nil {
 		t.Fatalf("PutDecision from A to B failed: %v", err)
 	}
 
-	// 4. Critical Verification
-	// Since both like each other now, MutualLikes MUST be true!
-	if !resp.GetMutualLikes() {
-		t.Errorf("Critical Match Defect: Expected MutualLikes to be true, but got false")
-	}
-
-	// 5. Edge Case Verification: What if A changes mind to PASS?
-	// If A later overwrites their decision to a "Pass", MutualLikes should no longer trigger.
-	passReq := &pb.PutDecisionRequest{
-		ActorUserId:     userA,
-		RecipientUserId: userB,
-		LikedRecipient:  false, // Changed mind to Pass
-	}
-
-	passResp, err := h.PutDecision(ctx, passReq)
+	// 4. Critical Verification for Match-Making
+	// Both users have liked each other; MutualLikes must return true.
+	mutualResp, err := h.MutualLikes(ctx, reqA)
 	if err != nil {
 		t.Fatalf("PutDecision overwrite to Pass failed: %v", err)
 	}
 
-	if passResp.GetMutualLikes() {
+	// Since both users have liked each other, MutualLikes must return true
+	if !mutualResp.GetMutualLikes() {
 		t.Errorf("Logic Error: MutualLikes triggered even though Actor chose to PASS")
 	}
+
+	// 5. Edge Case Verification: Overwrite to PASS
+	// If User A changes their mind and passes on User B, MutualLikes must immediately return false.
+	passReq := &pb.DecisionRequest{
+		ActorUserId:     userA,
+		RecipientUserId: userB,
+		LikedRecipient:  false, // User A is now passing on User B
+	}
+
+	_, err = h.PutDecision(ctx, passReq)
+	if err != nil {
+		t.Fatalf("PutDecision overwrite to Pass failed: %v", err)
+	}
+
+	// Since LikedRecipient = false, this call will hit the handler's early guard clause,
+	// bypassing the DB lookup and cleanly returning false.
+	passMutualResp, err := h.MutualLikes(ctx, passReq)
+	if err != nil {
+		t.Fatalf("MutualLikes check after Pass failed: %v", err)
+	}
+
+	if passMutualResp.GetMutualLikes() {
+		t.Errorf("Logic Error: MutualLikes triggered even though Actor chose to PASS")
+	}
+
 }
 
 // ==============================================================================
-// CASE C: Heavy User Cursor Pagination Test
+// CASE D: Heavy User Cursor Pagination Test
 // ==============================================================================
 // This test challenges the scale requirement by simulating a user with multiple
 // likes. It verifies that ListLikedYou returns results in reverse chronological
@@ -289,6 +318,94 @@ func TestListLikedYou_CursorPagination(t *testing.T) {
 	// Essential Check: Since there are no more records, NextPaginationToken MUST be nil!
 	if page3Resp.GetNextPaginationToken() != "" {
 		t.Errorf("Expected NextPaginationToken to be nil on the final page, but got a token")
+	}
+}
+
+// ==============================================================================
+// CASE C: Isolated Unit Tests for MutualLikes API
+// ==============================================================================
+// This test suite micro-tests the MutualLikes handler in isolation by directly
+// seeding varied state matrices into the database, verifying the early guard
+// clause, and checking the robustness of the read-only relation lookup.
+func TestMutualLikes_IsolatedScenarios(t *testing.T) {
+	db := setupTestDB(t)
+	h := NewExploreHandler(db)
+	ctx := context.Background()
+
+	userA := "user_alpha"
+	userB := "user_beta"
+
+	// --------------------------------------------------------------------------
+	// Scenario 1: Clean Slate (Zero Records in Database)
+	// --------------------------------------------------------------------------
+	// Ensures that if two users have never seen each other, it returns false safely.
+	cleanReq := &pb.DecisionRequest{
+		ActorUserId:     userA,
+		RecipientUserId: userB,
+		LikedRecipient:  true,
+	}
+	resp1, err := h.MutualLikes(ctx, cleanReq)
+	if err != nil {
+		t.Fatalf("Scenario 1 failed: %v", err)
+	}
+	if resp1.GetMutualLikes() {
+		t.Errorf("Scenario 1 Error: Expected false on a clean database, got true")
+	}
+
+	// --------------------------------------------------------------------------
+	// Scenario 2: Early Guard Clause Verification (The "Pass" Optimization)
+	// --------------------------------------------------------------------------
+	// Even if User B historically LIKED User A, if User A invokes this with LikedRecipient = false,
+	// the code MUST trigger the early if-guard, short-circuit, and return false without hitting the DB.
+	historicalLike := model.Decision{
+		ActorUserID:     userB,
+		RecipientUserID: userA,
+		LikedRecipient:  true,
+	}
+	if err := db.Create(&historicalLike).Error; err != nil {
+		t.Fatalf("Failed to seed historical like for Scenario 2: %v", err)
+	}
+
+	passReq := &pb.DecisionRequest{
+		ActorUserId:     userA,
+		RecipientUserId: userB,
+		LikedRecipient:  false, // This triggers your 'if req.GetLikedRecipient()' check
+	}
+	resp2, err := h.MutualLikes(ctx, passReq)
+	if err != nil {
+		t.Fatalf("Scenario 2 failed: %v", err)
+	}
+	if resp2.GetMutualLikes() {
+		t.Errorf("Scenario 2 Error: Guard clause failed. MutualLikes returned true even though Actor passed")
+	}
+
+	// Clean database state for the next deterministic scenario
+	db.Exec("DELETE FROM decisions")
+
+	// --------------------------------------------------------------------------
+	// Scenario 3: Asymmetric Dislike State (Double-PASS)
+	// --------------------------------------------------------------------------
+	// If both users explicitly chose to PASS on each other in the database,
+	// MutualLikes must return false even if the request payload carries LikedRecipient = true.
+	dislikeRecords := []model.Decision{
+		{ActorUserID: userA, RecipientUserID: userB, LikedRecipient: false},
+		{ActorUserID: userB, RecipientUserID: userA, LikedRecipient: false},
+	}
+	if err := db.Create(&dislikeRecords).Error; err != nil {
+		t.Fatalf("Failed to seed double-pass records for Scenario 3: %v", err)
+	}
+
+	attackReq := &pb.DecisionRequest{
+		ActorUserId:     userA,
+		RecipientUserId: userB,
+		LikedRecipient:  true, // Pretending to like, forcing the code to query the DB
+	}
+	resp3, err := h.MutualLikes(ctx, attackReq)
+	if err != nil {
+		t.Fatalf("Scenario 3 failed: %v", err)
+	}
+	if resp3.GetMutualLikes() {
+		t.Errorf("Scenario 3 Error: Relation engine bypassed filters; returned true for historical Double-PASS")
 	}
 }
 

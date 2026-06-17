@@ -15,7 +15,7 @@ import (
 )
 
 // PutDecision records the decision of the actor to like or pass the recipient.
-func (h *ExploreHandler) PutDecision(ctx context.Context, req *pb.PutDecisionRequest) (*pb.PutDecisionResponse, error) {
+func (h *ExploreHandler) PutDecision(ctx context.Context, req *pb.DecisionRequest) (*pb.PutDecisionResponse, error) {
 	log.Printf("[gRPC] PutDecision invoked: ActorUserID=%s, RecipientUserID=%s, Liked=%t",
 		req.GetActorUserId(), req.GetRecipientUserId(), req.GetLikedRecipient())
 
@@ -40,7 +40,17 @@ func (h *ExploreHandler) PutDecision(ctx context.Context, req *pb.PutDecisionReq
 		return nil, status.Errorf(codes.Internal, "failed to save decision: %v", err)
 	}
 
-	// 2. Check for Mutual Like (Only if current action is a "Like")
+	return &pb.PutDecisionResponse{}, nil
+}
+
+func (h *ExploreHandler) MutualLikes(ctx context.Context, req *pb.DecisionRequest) (*pb.MutualLikesResponse, error) {
+	log.Printf("[gRPC] PutDecision invoked: ActorUserID=%s, RecipientUserID=%s, Liked=%t",
+		req.GetActorUserId(), req.GetRecipientUserId(), req.GetLikedRecipient())
+
+	if req.GetActorUserId() == "" || req.GetRecipientUserId() == "" {
+		return nil, status.Error(codes.InvalidArgument, "actor_user_id and recipient_user_id are required")
+	}
+
 	mutualLikes := false
 	if req.GetLikedRecipient() {
 		var reverseDecision model.Decision
@@ -56,7 +66,8 @@ func (h *ExploreHandler) PutDecision(ctx context.Context, req *pb.PutDecisionReq
 		}
 	}
 
-	return &pb.PutDecisionResponse{
+	return &pb.MutualLikesResponse{
 		MutualLikes: mutualLikes,
 	}, nil
+
 }
