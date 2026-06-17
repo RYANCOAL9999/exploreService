@@ -69,7 +69,7 @@ go test ./internal/handler/... -v
 
 Decision Overwriting: Ensures that a second decision from the same actor to the same recipient successfully overwrites the existing state instead of throwing constraint errors or creating duplicate records.
 
-Mutual Like Detection: Confirms that when two users both like each other, MutualLikes evaluates to true inside the gRPC response instantly.
+Mutual Like Detection: Confirms that when two users both like each other, the dedicated MutualLikes method evaluates to true inside the gRPC response.
 
 Cursor Pagination Boundary: Verifies that multi-page token parsing returns records sequentially by time (newest first) and safely yields a nil token on the final page.
 
@@ -92,3 +92,23 @@ grpcurl -plaintext -d '{"actor_user_id": "alice", "recipient_user_id": "bob", "l
 ```bash
 grpcurl -plaintext -d '{"recipient_user_id": "bob", "page_size": 2}' localhost:50051 pb.ExploreService/ListLikedYou
 ```
+
+### 3. Check Mutual Likes Status
+
+```bash
+grpcurl -plaintext -d '{"actor_user_id": "alice", "recipient_user_id": "bob", "liked_recipient": true}' localhost:50051 pb.ExploreService/MutualLikes
+```
+
+### 4. List New Users Who Liked (Excluding Matches)
+
+```bash
+grpcurl -plaintext -d '{"recipient_user_id": "bob", "page_size": 10}' localhost:50051 pb.ExploreService/ListNewLikedYou
+```
+
+### 5. Count Total Users Who Liked
+
+```bash
+grpcurl -plaintext -d '{"recipient_user_id": "bob"}' localhost:50051 pb.ExploreService/CountLikedYou
+```
+
+
