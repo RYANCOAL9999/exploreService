@@ -228,10 +228,14 @@ func (h *ExploreHandler) ListNewLikedYou(ctx context.Context, req *pb.ListLikedY
 
 	// Filter out matches, capped strictly by the requested pageSize.
 	var decisions []model.Decision
-	for _, d := range candidateDecisions {
+	loopBrokeEarly := false // True if we stopped before fully consuming this batch.
+	for i, d := range candidateDecisions {
 		if !likedBackMap[d.ActorUserID] { // If I have not liked them back.
 			decisions = append(decisions, d)
 			if len(decisions) == pageSize {
+				if i < len(candidateDecisions)-1 {
+					loopBrokeEarly = true
+				}
 				break
 			}
 		}
@@ -249,7 +253,6 @@ func (h *ExploreHandler) ListNewLikedYou(ctx context.Context, req *pb.ListLikedY
 	}
 
 	var nextToken *string
-
 	//*******************************Disable it*****************************************************************************************************************************//
 	// if len(decisions) == pageSize {
 	// 	last := decisions[len(decisions)-1]
@@ -263,9 +266,18 @@ func (h *ExploreHandler) ListNewLikedYou(ctx context.Context, req *pb.ListLikedY
 	// 1. The final filtered results reach the requested page size limit.
 	// 2. The database raw records match the fetchSize, indicating more data might exist for filtering.
 	// ==============================================================================================================================
-	if len(decisions) == pageSize || len(candidateDecisions) == fetchSize {
+	if len(candidateDecisions) == fetchSize || loopBrokeEarly {
 		if len(decisions) > 0 {
+			// Safe even when loopBrokeEarly: any unprocessed tail in candidateDecisions sorts
+			// strictly after (older than) the last returned decision, so it'll be re-fetched
+			// and re-checked on the next page — nothing gets skipped.
 			last := decisions[len(decisions)-1]
+			t := encodeCursor(cursor{Time: last.CreatedAt, ID: last.ID})
+			nextToken = &t
+		} else {
+			// decisions empty implies loopBrokeEarly is false (can't break early with zero
+			// entries when pageSize > 0), so this branch only triggers via condition
+			last := candidateDecisions[len(candidateDecisions)-1]
 			t := encodeCursor(cursor{Time: last.CreatedAt, ID: last.ID})
 			nextToken = &t
 		}
