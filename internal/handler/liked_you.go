@@ -137,36 +137,109 @@ func (h *ExploreHandler) ListNewLikedYou(ctx context.Context, req *pb.ListLikedY
 
 	pageSize := safePageSize(req.GetPageSize())
 
+	//*******************************Disable it*****************************************************************************************************************************//
 	// LEFT JOIN against the same table to find cases where the recipient has NOT liked back.
 	// If reverse.id IS NULL, the recipient has not yet responded with a like.
+	// query := h.db.WithContext(ctx).
+	// 	Model(&model.Decision{}).
+	// 	Select("decisions.*").
+	// 	Joins(`LEFT JOIN decisions AS reverse
+	// 		ON reverse.actor_user_id = decisions.recipient_user_id
+	// 		AND reverse.recipient_user_id = decisions.actor_user_id
+	// 		AND reverse.liked_recipient = ?`, true).
+	// 	Where("decisions.recipient_user_id = ? AND decisions.liked_recipient = ?", req.GetRecipientUserId(), true).
+	// 	Where("reverse.id IS NULL").
+	// 	Order("decisions.created_at DESC, decisions.id DESC").
+	// 	Limit(pageSize)
+
+	// if req.GetPaginationToken() != "" {
+	// 	c, err := decodeCursor(req.GetPaginationToken())
+	// 	if err != nil {
+	// 		return nil, status.Errorf(codes.InvalidArgument, "invalid pagination token: %v", err)
+	// 	}
+	// 	query = query.Where(
+	// 		"(decisions.created_at, decisions.id) < (?, ?)",
+	// 		c.Time, c.ID,
+	// 	)
+	// }
+	// var decisions []model.Decision
+	// if err := query.Find(&decisions).Error; err != nil {
+	// 	return nil, status.Errorf(codes.Internal, "failed to query new likes: %v", err)
+	// }
+	//**********************************************************************************************************************************************************************//
+
+	//*******************************New Starting***************************************************************************************************************************//
+	// Over-fetch to mitigate data reduction caused by in-memory filtering.
+	fetchSize := pageSize * 2
+
+	// ==============================================================================================================================
+	// Step 1: Lookup Table 1 — Fetch candidate decisions (Single table scan, NO JOIN)
+	// ==============================================================================================================================
 	query := h.db.WithContext(ctx).
 		Model(&model.Decision{}).
-		Select("decisions.*").
-		Joins(`LEFT JOIN decisions AS reverse
-			ON reverse.actor_user_id = decisions.recipient_user_id
-			AND reverse.recipient_user_id = decisions.actor_user_id
-			AND reverse.liked_recipient = ?`, true).
-		Where("decisions.recipient_user_id = ? AND decisions.liked_recipient = ?", req.GetRecipientUserId(), true).
-		Where("reverse.id IS NULL").
-		Order("decisions.created_at DESC, decisions.id DESC").
-		Limit(pageSize)
+		Where("recipient_user_id = ? AND liked_recipient = ?", req.GetRecipientUserId(), true).
+		Order("created_at DESC, id DESC").
+		Limit(fetchSize)
 
 	if req.GetPaginationToken() != "" {
 		c, err := decodeCursor(req.GetPaginationToken())
 		if err != nil {
 			return nil, status.Errorf(codes.InvalidArgument, "invalid pagination token: %v", err)
 		}
-		query = query.Where(
-			"(decisions.created_at, decisions.id) < (?, ?)",
-			c.Time, c.ID,
-		)
+		query = query.Where("(created_at, id) < (?, ?)", c.Time, c.ID)
 	}
 
+	var candidateDecisions []model.Decision
+	if err := query.Find(&candidateDecisions).Error; err != nil {
+		return nil, status.Errorf(codes.Internal, "failed to query candidate decisions: %v", err)
+	}
+
+	if len(candidateDecisions) == 0 {
+		return &pb.ListLikedYouResponse{}, nil
+	}
+
+	// Extract candidate ActorUserIDs for the reverse lookup.
+	actorIDs := make([]string, len(candidateDecisions))
+	for i, d := range candidateDecisions {
+		actorIDs[i] = d.ActorUserID
+	}
+
+	// ==============================================================================================================================
+	// Step 2: Lookup Table 2 — Reverse check which candidates I have already liked (Batch IN query)
+	// ==============================================================================================================================
+	var myReverseDecisions []model.Decision
+	err := h.db.WithContext(ctx).
+		Model(&model.Decision{}).
+		Select("recipient_user_id"). // Only recipient_user_id is required to build the lookup map.
+		Where("actor_user_id = ? AND recipient_user_id IN (?) AND liked_recipient = ?", req.GetRecipientUserId(), actorIDs, true).
+		Find(&myReverseDecisions).Error
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "failed to query reverse decisions: %v", err)
+	}
+
+	// ==============================================================================================================================
+	// Step 3: In-Memory Hash Filtering
+	// ==============================================================================================================================
+	// Map matched entries for O(1) high-speed lookups.
+	likedBackMap := make(map[string]bool, len(myReverseDecisions))
+	for _, rd := range myReverseDecisions {
+		likedBackMap[rd.RecipientUserID] = true
+	}
+
+	// Filter out matches, capped strictly by the requested pageSize.
 	var decisions []model.Decision
-	if err := query.Find(&decisions).Error; err != nil {
-		return nil, status.Errorf(codes.Internal, "failed to query new likes: %v", err)
+	for _, d := range candidateDecisions {
+		if !likedBackMap[d.ActorUserID] { // If I have not liked them back.
+			decisions = append(decisions, d)
+			if len(decisions) == pageSize {
+				break
+			}
+		}
 	}
 
+	// ==============================================================================================================================
+	// Step 4: Serialize Response and Generate Pagination Token
+	// ==============================================================================================================================
 	likers := make([]*pb.ListLikedYouResponse_Liker, len(decisions))
 	for i, d := range decisions {
 		likers[i] = &pb.ListLikedYouResponse_Liker{
@@ -176,10 +249,26 @@ func (h *ExploreHandler) ListNewLikedYou(ctx context.Context, req *pb.ListLikedY
 	}
 
 	var nextToken *string
-	if len(decisions) == pageSize {
-		last := decisions[len(decisions)-1]
-		t := encodeCursor(cursor{Time: last.CreatedAt, ID: last.ID})
-		nextToken = &t
+
+	//*******************************Disable it*****************************************************************************************************************************//
+	// if len(decisions) == pageSize {
+	// 	last := decisions[len(decisions)-1]
+	// 	t := encodeCursor(cursor{Time: last.CreatedAt, ID: last.ID})
+	// 	nextToken = &t
+	// }
+	//**********************************************************************************************************************************************************************//
+
+	// ==============================================================================================================================
+	// Step 5: Generate the next cursor token if:
+	// 1. The final filtered results reach the requested page size limit.
+	// 2. The database raw records match the fetchSize, indicating more data might exist for filtering.
+	// ==============================================================================================================================
+	if len(decisions) == pageSize || len(candidateDecisions) == fetchSize {
+		if len(decisions) > 0 {
+			last := decisions[len(decisions)-1]
+			t := encodeCursor(cursor{Time: last.CreatedAt, ID: last.ID})
+			nextToken = &t
+		}
 	}
 
 	return &pb.ListLikedYouResponse{
