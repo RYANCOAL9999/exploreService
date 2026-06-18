@@ -1,0 +1,76 @@
+name: "exploreService Terraform Deployment"
+
+on:
+  push:
+    branches:
+      - main # Triggers the deployment automatically when code is merged or pushed to the main branch
+  workflow_dispatch: # Allows engineers to manually trigger the deployment via the GitHub UI button
+
+# 💡 DevSecOps Best Practice: Enable OIDC permissions to exchange GitHub tokens for short-lived AWS temporary credentials
+permissions:
+  id-token: write
+  contents: read
+
+# Global environment variables mapping precisely to your variables.tf.example definitions
+env:
+  AWS_REGION: "ap-east-1"                                        # Replace with your targeted AWS Region
+  AWS_ROLE_TO_ASSUME: "arn:aws:iam::123456789012:role/github-actions-eks-deployer" # Replace with your actual AWS IAM Role ARN
+  EKS_CLUSTER_NAME: "your-production-eks-cluster"                # Replace with your specific EKS cluster name
+  AWS_ACCOUNT_ID: "123456789012"                                 # Replace with your actual 12-digit AWS Account ID
+  AURORA_ENDPOINT: "://amazonaws.com" # Replace with your Aurora Writer Endpoint
+
+jobs:
+  deploy:
+    name: "Build and Deploy via Terraform"
+    runs-on: ubuntu-latest
+
+    steps:
+      # Step 1: Checkout the source code repository onto the GitHub runner
+      - name: Checkout Source Code
+        uses: actions/checkout@v4
+
+      # Step 2: Authenticate securely via AWS OIDC (Eliminates long-lived hardcoded AWS Access Keys)
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.AWS_ROLE_TO_ASSUME }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      # Step 3: Install and set up the explicit version of the Terraform CLI toolchain
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.5.0"
+
+      # Step 4: Automate the localization process by duplicating the template files (.example -> .tf)
+      - name: Prepare Terraform Environment
+        run: |
+          cd terraform/
+          cp main.tf.example main.tf
+          cp providers.tf.example providers.tf
+          cp variables.tf.example variables.tf
+
+      # Step 5: Initialize the Terraform environment (Downloads the Kubernetes and AWS Provider plugins)
+      - name: Terraform Init
+        run: |
+          cd terraform/
+          terraform init
+
+      # Step 6: Validate the Terraform code syntax structure before modification
+      - name: Terraform Validate
+        run: |
+          cd terraform/
+          terraform validate
+
+      # Step 7: Execute automated execution of infrastructure deployment
+      # 💡 Note: secrets.AURORA_DB_PASSWORD must be configured beforehand inside the GitHub Repository Secrets settings
+      - name: Terraform Apply
+        run: |
+          cd terraform/
+          terraform apply \
+            -var="aws_region=${{ env.AWS_REGION }}" \
+            -var="eks_cluster_name=${{ env.EKS_CLUSTER_NAME }}" \
+            -var="aws_account_id=${{ env.AWS_ACCOUNT_ID }}" \
+            -var="aurora_endpoint=${{ env.AURORA_ENDPOINT }}" \
+            -var="db_password=${{ secrets.AURORA_DB_PASSWORD }}" \
+            --auto-approve
