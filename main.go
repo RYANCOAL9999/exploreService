@@ -1,8 +1,10 @@
 package main
 
 import (
+	"context"
 	"exploreService/internal/database"
 	"exploreService/internal/handler"
+	"exploreService/internal/telemetry"
 	"exploreService/pb"
 	"fmt"
 	"log"
@@ -39,6 +41,17 @@ func main() {
 	if err != nil {
 		log.Fatalf("Failed to listen on %s: %v", address, err)
 	}
+
+	mp, err := telemetry.InitMetrics(context.Background(), "otel-collector:4317")
+	if err != nil {
+		log.Fatalf("Failed to initialize OTLP metrics: %v", err)
+	}
+
+	defer func() {
+		shCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer cancel()
+		telemetry.ShutdownMetrics(shCtx, mp)
+	}()
 
 	// Initialize the gRPC server.
 	grpcServer := grpc.NewServer()

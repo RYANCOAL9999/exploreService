@@ -1,0 +1,21 @@
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317 # Receive gRPC pointers pushed from Go services.
+
+processors:
+  batch:
+
+exporters:
+  prometheus:
+    endpoint: 0.0.0.0:8889 # Create an endpoint on the Docker intranet for Prometheus to crawl.
+    namespace: "otel"
+    file_format: "standard"
+
+service:
+  pipelines:
+    metrics:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [prometheus]
