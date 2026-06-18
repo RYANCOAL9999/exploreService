@@ -28,6 +28,9 @@ func main() {
 	// Initialize the PostgreSQL connection pool.
 	db := database.NewPostgresConnection()
 
+	// Ensure the database connection is closed when the application exits.
+	defer database.ClosePostgresConnection(db)
+
 	// Determine the port from environment variables or fallback to default.
 	port := os.Getenv("PORT")
 	if port == "" {
