@@ -24,17 +24,17 @@ Leave `variables.tf` as it is, and explicitly declare every dynamic variable dur
 
 ---
 
-## 🚀 Step 2: Provision Infrastructure via Terraform
+## 🚀 Step 2: Provision Infrastructure via Terraform (With Remote Backend)
 
-Run the following commands sequentially inside the `terraform/` directory.
-
-*Note: If you utilized **Option A** above, you can omit the `-var` flags from the commands below except for `db_password` and `aurora_endpoint` which do not have defaults.*
+Run the following commands sequentially inside the `terraform/` directory. 
 
 ```bash
-# 1. Initialize the workspace and download necessary cloud providers
+# 1. Initialize the workspace 
+# 💡 Engineering Note: Terraform will automatically detect the "backend" block, 
+# link to AWS S3/DynamoDB, and secure the state locking system.
 terraform init
 
-# 2. Preview the actions Terraform will perform (Highly Recommended)
+# 2. Preview the actions Terraform will perform 
 terraform plan \
   -var="aws_region=your_actual_aws_region" \
   -var="eks_cluster_name=your_actual_eks_cluster_name" \
@@ -42,7 +42,7 @@ terraform plan \
   -var="aurora_endpoint=your_actual_aurora_postgres_endpoint" \
   -var="db_password=your_actual_aurora_secure_password"
 
-# 3. Apply changes and execute one-click deployment
+# 3. Apply changes and execute one-click deployment to EKS
 terraform apply \
   -var="aws_region=your_actual_aws_region" \
   -var="eks_cluster_name=your_actual_eks_cluster_name" \

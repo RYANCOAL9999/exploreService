@@ -10,6 +10,14 @@ terraform {
             version = "~> 2.0"
         }
     }
+
+    backend "s3" {
+        bucket         = "your-company-terraform-state-bucket"
+        key            = "exploreService/production/terraform.tfstate"
+        region         = "ap-east-1"
+        dynamodb_table = "your-company-terraform-locks-table"
+        encrypt        = true
+    }
 }
 
 provider "aws" {
