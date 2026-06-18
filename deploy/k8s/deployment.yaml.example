@@ -1,3 +1,28 @@
+# apiVersion: v1
+# kind: ConfigMap
+# metadata:
+#   name: otel-collector-config
+#   namespace: default
+# data:
+#   otel-collector-config.yml: |
+#     receivers:
+#       otlp:
+#         protocols:
+#           grpc:
+#             endpoint: 0.0.0.0:4317
+#     processors:
+#       batch:
+#     exporters:
+#       prometheus:
+#         endpoint: 0.0.0.0:8889
+#         file_format: "standard"
+#     service:
+#       pipelines:
+#         metrics:
+#           receivers: [otlp]
+#           processors: [batch]
+#           exporters: [prometheus]
+# ---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -19,8 +44,15 @@ spec:
     metadata:
       labels:
         app: exploreService
+      # 💡 Core optimization: Add Prometheus Pod annotations
+      # Prometheus will automatically pull the pointer from port 8889 of this Pod as soon as it detects these three annotations.
+      # annotations:
+      #   prometheus.io/scrape: "true"
+      #   prometheus.io/path: "/metrics"
+      #   prometheus.io/port: "8889"
     spec:
       containers:
+      # Go service container
       - name: exploreService          
         image: <your_aws_account_id>://
         imagePullPolicy: IfNotPresent
@@ -40,7 +72,8 @@ spec:
               key: DB_PASSWORD
         - name: DB
           value: "host=://amazonaws.com user=postgres password=$(DB_PASSWORD) dbname=explore_db port=5432 sslmode=disable TimeZone=UTC"
-        
+        - name: OTEL_COLLECTOR_ADDR
+          value: "otel-collector-service.monitoring:4317" # Enter the K8S Service domain name of the centralized Collector.
         resources:
           limits:
             cpu: "500m"
@@ -48,3 +81,28 @@ spec:
           requests:
             cpu: "100m"
             memory: "256Mi"
+      # OTel Collector Sidecar
+      # - name: otel-collector
+      #   image: otel/opentelemetry-collector-contrib:0.95.0
+      #   command: ["--config=/etc/otel/otel-collector-config.yml"]
+      #   ports:
+      #   - containerPort: 4317
+      #     name: otlp-grpc
+      #   - containerPort: 8889
+      #     name: prom-metrics
+      #   resources:
+      #     limits:
+      #       cpu: "100m"
+      #       memory: "128Mi"
+      #     requests:
+      #       cpu: "50m"
+      #       memory: "64Mi"
+      #   volumeMounts:
+      #   - name: collector-config-vol
+      #     mountPath: /etc/otel/
+      # 💾 Mount the ConfigMap file defined above.
+      # volumes:
+      # - name: collector-config-vol
+      #   configMap:
+      #     name: otel-collector-config
+
