@@ -1,0 +1,50 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: explore-service-deployment
+  namespace: default
+  labels:
+    app: exploreService
+spec:
+  replicas: 2                         
+  strategy:
+    type: RollingUpdate                
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      app: exploreService
+  template:
+    metadata:
+      labels:
+        app: exploreService
+    spec:
+      containers:
+      - name: exploreService          
+        image: <your_aws_account_id>://
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 50051
+          name: grpc
+        securityContext:
+          runAsNonRoot: true
+          runAsUser: 10001
+        env:
+        - name: PORT
+          value: "50051"
+        - name: DB_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: explore-service-secret
+              key: DB_PASSWORD
+        - name: DB
+          value: "host=://amazonaws.com user=postgres password=$(DB_PASSWORD) dbname=explore_db port=5432 sslmode=disable TimeZone=UTC"
+        
+        resources:
+          limits:
+            cpu: "500m"
+            memory: "512Mi"
+          requests:
+            cpu: "100m"
+            memory: "256Mi"

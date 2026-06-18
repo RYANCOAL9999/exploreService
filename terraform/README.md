@@ -1,0 +1,53 @@
+## 🛠️ Step 1: Initialize Configuration Files
+
+To prevent sensitive infrastructure definitions, variables, and cluster-specific configurations from leaking into version control, active configuration files are omitted by Git. You must initialize them from the provided `.example` templates.
+
+Navigate to the terraform directory and copy the template files:
+
+```bash
+cd terraform/
+cp main.tf.example main.tf
+cp providers.tf.example providers.tf
+cp variables.tf.example variables.tf
+```
+
+### Configuration Updates Required (Choose Option A or Option B):
+
+#### Option A: Hardcode Variables inside `variables.tf` (Simpler for local test)
+Open your newly created `variables.tf` file and update the `default` values or `description` placeholders directly with your AWS environment metrics:
+* Update `your_aws_region` (e.g., `"ap-east-1"`)
+* Update `your_eks_cluster_name` (e.g., `"my-production-cluster"`)
+* Update `your_aws_account_id` (e.g., `"123456789012"`)
+
+#### Option B: Pass Variables via Command-Line Flags (Recommended for CI/CD)
+Leave `variables.tf` as it is, and explicitly declare every dynamic variable during runtime using `-var` flags.
+
+---
+
+## 🚀 Step 2: Provision Infrastructure via Terraform
+
+Run the following commands sequentially inside the `terraform/` directory.
+
+*Note: If you utilized **Option A** above, you can omit the `-var` flags from the commands below except for `db_password` and `aurora_endpoint` which do not have defaults.*
+
+```bash
+# 1. Initialize the workspace and download necessary cloud providers
+terraform init
+
+# 2. Preview the actions Terraform will perform (Highly Recommended)
+terraform plan \
+  -var="aws_region=your_actual_aws_region" \
+  -var="eks_cluster_name=your_actual_eks_cluster_name" \
+  -var="aws_account_id=your_actual_aws_account_id" \
+  -var="aurora_endpoint=your_actual_aurora_postgres_endpoint" \
+  -var="db_password=your_actual_aurora_secure_password"
+
+# 3. Apply changes and execute one-click deployment
+terraform apply \
+  -var="aws_region=your_actual_aws_region" \
+  -var="eks_cluster_name=your_actual_eks_cluster_name" \
+  -var="aws_account_id=your_actual_aws_account_id" \
+  -var="aurora_endpoint=your_actual_aurora_postgres_endpoint" \
+  -var="db_password=your_actual_aurora_secure_password" \
+  --auto-approve
+```

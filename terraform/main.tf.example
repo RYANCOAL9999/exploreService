@@ -1,0 +1,119 @@
+resource "kubernetes_secret" "explore_service_secret" {
+    metadata {
+        name      = "explore-service-secret"
+        namespace = "default"
+    }
+
+    type = "Opaque"
+    
+    data = {
+        DB_PASSWORD = var.db_password
+    }
+
+}
+
+resource "kubernetes_deployment" "explore_service" {
+    metadata {
+        name      = "explore-service"
+        namespace = "default"
+        labels = {
+            app = "exploreService"
+        }
+    }
+
+    spec {
+        replicas = 2 # 🚀 
+
+        strategy {
+            type = "RollingUpdate"
+            rolling_update {
+                max_surge       = "1"
+                max_unavailable = "0"
+            }
+        }
+
+        selector {
+            match_labels = {
+                app = "exploreService"
+            }
+        }
+
+        template {
+            metadata {
+                labels = {
+                    app = "exploreService"
+                }
+            }
+
+            spec {
+                container {
+                    name              = "exploreService"
+                    image             = "${var.aws_account_id}.dkr.ecr.${var.aws_region}://"
+                    image_pull_policy = "IfNotPresent"
+
+                    port {
+                        container_port = 50051
+                        name           = "grpc"
+                    }
+
+                    security_context {
+                        run_as_non_root = true
+                        run_as_user     = 10001
+                    }
+
+                    env {
+                        name  = "PORT"
+                        value = "50051"
+                    }
+
+                    env {
+                        name = "DB_PASSWORD"
+                        value_from {
+                            secret_key_ref {
+                                name = kubernetes_secret.explore_service_secret.metadata[0].name
+                                key  = "DB_PASSWORD"
+                            }
+                        }
+                    }
+
+                    env {
+                        name  = "DB"
+                        value = "host=${var.aurora_endpoint} user=postgres password=$(DB_PASSWORD) dbname=explore_db port=5432 sslmode=disable TimeZone=UTC"
+                    }
+
+                    resources {
+                        limits = {
+                            cpu    = "500m"
+                            memory = "512Mi"
+                        }
+                        requests = {
+                            cpu    = "100m"
+                            memory = "256Mi"
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+resource "kubernetes_service" "explore_service" {
+    metadata {
+        name      = "explore-service"
+        namespace = "default"
+    }
+
+    spec {
+        selector = {
+            app = "exploreService"
+        }
+
+        port {
+            protocol    = "TCP"
+            port        = 50051
+            target_port = 50051
+        }
+
+        type = "ClusterIP"
+    }
+}
