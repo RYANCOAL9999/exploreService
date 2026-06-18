@@ -56,6 +56,28 @@ resource "kubernetes_deployment" "explore_service" {
                         name           = "grpc"
                     }
 
+                    readiness_probe {
+                        grpc {
+                            port    = 50051
+                            service = "exploreService"
+                        }
+                        initial_delay_seconds = 5
+                        period_seconds        = 5
+                        timeout_seconds       = 2
+                        failure_threshold     = 3
+                    }
+
+                    liveness_probe {
+                        grpc {
+                            port    = 50051
+                            service = "exploreService"
+                        }
+                        initial_delay_seconds = 10
+                        period_seconds        = 10
+                        timeout_seconds       = 2
+                        failure_threshold     = 3
+                    }
+
                     security_context {
                         run_as_non_root = true
                         run_as_user     = 10001

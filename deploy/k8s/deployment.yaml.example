@@ -40,7 +40,25 @@ spec:
               key: DB_PASSWORD
         - name: DB
           value: "host=://amazonaws.com user=postgres password=$(DB_PASSWORD) dbname=explore_db port=5432 sslmode=disable TimeZone=UTC"
-        
+        # ➕ Core optimization: Add native K8S gRPC probe mechanism
+        # 💡 Readiness probe: Controls rolling update traffic. If the initial check fails, absolutely no traffic will be distributed.
+        readinessProbe:
+          grpc:
+            port: 50051          # K8S will directly initiate a gRPC Health Check to 50051.
+            service: "exploreService" # Optional: Check specific service names; if "" is entered, check the entire domain.
+          initialDelaySeconds: 5 # The container starts its first check 5 seconds after startup (to give GORM some time to migrate automatically).
+          periodSeconds: 5       # Check every 5 seconds
+          timeoutSeconds: 2      # The timeout period is 2 seconds.
+          failureThreshold: 3    # Three consecutive failures are considered unready (and the traffic is removed).
+        # 💡 Survivability probe: Monitors whether the process has deadlocked. If it fails consecutively, Kubernetes will immediately restart the Pod.
+        livenessProbe:
+          grpc:
+            port: 50051
+            # Intentionally omitting the "service" attribute indicates a full domain inspection.
+          initialDelaySeconds: 10 # Give a longer buffer time
+          periodSeconds: 10      # Check every 10 seconds
+          timeoutSeconds: 2
+          failureThreshold: 3    # If the container fails three times consecutively (and freezes within 30 seconds), Kubernetes will force a restart.       
         resources:
           limits:
             cpu: "500m"
