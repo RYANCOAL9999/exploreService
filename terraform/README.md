@@ -6,6 +6,7 @@ Navigate to the terraform directory and copy the template files:
 
 ```bash
 cd terraform/
+# The main.tf.example has Ingress Resource for gRPC HTTP/2 Traffic Routing with load balancer, Please be carefully to control.
 cp main.tf.example main.tf
 cp providers.tf.example providers.tf
 cp variables.tf.example variables.tf
@@ -18,6 +19,7 @@ Open your newly created `variables.tf` file and update the `default` values or `
 * Update `your_aws_region` (e.g., `"ap-east-1"`)
 * Update `your_eks_cluster_name` (e.g., `"my-production-cluster"`)
 * Update `your_aws_account_id` (e.g., `"123456789012"`)
+* Update `allowed_source_ranges` (e.g., `["203.0.113.0/24"]` for restricting specific IP range if you want)
 
 #### Option B: Pass Variables via Command-Line Flags (Recommended for CI/CD)
 Leave `variables.tf` as it is, and explicitly declare every dynamic variable during runtime using `-var` flags.
@@ -50,12 +52,14 @@ terraform apply \
   -var="aurora_endpoint=your_actual_aurora_postgres_endpoint" \
   -var="db_password=your_actual_aurora_secure_password" \
   --auto-approve
+
+# 4. Special Item for Only allows specific IP range
+terraform apply \
+  -var="aws_region=your_actual_aws_region" \
+  -var="eks_cluster_name=your_actual_eks_cluster_name" \
+  -var="aws_account_id=your_actual_aws_account_id" \
+  -var="aurora_endpoint=your_actual_aurora_postgres_endpoint" \
+  -var="db_password=your_actual_aurora_secure_password" \
+  -var='allowed_source_ranges=["203.0.113.0/24"]' \
+  --auto-approve
 ```
-
-#### Special Item for Only allows specific IP range with create a tf file and run it.
-
-hclspec {
-  type = "LoadBalancer"
-  load_balancer_source_ranges = ["203.0.113.0/24"] # Only allows specific IP range
-}
-
