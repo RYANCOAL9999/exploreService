@@ -51,3 +51,11 @@ terraform apply \
   -var="db_password=your_actual_aurora_secure_password" \
   --auto-approve
 ```
+
+#### Special Item for Only allows specific IP range with create a tf file and run it.
+
+hclspec {
+  type = "LoadBalancer"
+  load_balancer_source_ranges = ["203.0.113.0/24"] # Only allows specific IP range
+}
+

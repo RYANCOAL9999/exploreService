@@ -9,5 +9,15 @@ spec:
   ports:
   - protocol: TCP
     port: 50051
-    targetPort: 50051
-  type: ClusterIP                      
+    target_port: 50051
+    # NodePort (The Direct-to-Machine Way) method
+    # nodePort: 30123
+  type: ClusterIP
+
+  # NodePort (The Direct-to-Machine Way) method
+  # type: NodePort # 💡 Using NodePort for external access to the service through a specific port on each node
+  # Ensures traffic hits pods on the landing node directly, reducing network jitter
+  # externalTrafficPolicy: Local
+
+
+                        

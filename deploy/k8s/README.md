@@ -99,3 +99,9 @@ kubectl delete -f deploy/k8s/service.yaml
 kubectl delete -f deploy/k8s/deployment.yaml
 kubectl delete -f deploy/k8s/secret.yaml
 ```
+
+#### Special Item for Only allows specific IP range
+
+```bash
+kubectl patch svc <Your_Service_Name> -n <Namespace> -p '{"spec":{"load_balancer_source_ranges":["203.0.113.0/24"]}}'
+```
