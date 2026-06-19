@@ -22,6 +22,8 @@ cd .github/deploy/
 cp secret.yaml.example secret.yaml
 cp deployment.yaml.example deployment.yaml
 cp service.yaml.example service.yaml
+# This is one is for enabling Load balancer, Please be carefully to control.
+cp ingress.yaml.example ingress.yaml
 ```
 
 ### Configuration Updates Required:
