@@ -4,10 +4,18 @@ resource "kubernetes_secret" "explore_service_secret" {
         namespace = "default"
     }
 
+    # work for non-TLS enabled services with LoadBalancer with gRPC HTTP/2.
     type = "Opaque"
-    
+
+    # only work for TLS enabled services with LoadBalancer with gRPC HTTP/2.
+    # type = "kubernetes.io/tls"
+
     data = {
         DB_PASSWORD = var.db_password
+
+        # 💡 enable it for gRPC HTTP/2 needs SSL/TLS
+        # "tls.crt" = filebase64("${path.module}/certs/tls.crt") # File path to the TLS certificate file
+        # "tls.key" = filebase64("${path.module}/certs/tls.key") # File path to the TLS private key file
     }
 
 }
@@ -134,8 +142,71 @@ resource "kubernetes_service" "explore_service" {
             protocol    = "TCP"
             port        = 50051
             target_port = 50051
+
+            # NodePort (The Direct-to-Machine Way) method
+            # node_port   = 30123 # Outside client connect to NodeIP
         }
 
-        type = "ClusterIP"
+        type = "ClusterIP" # 💡 Using ClusterIP for internal communication within the Kubernetes cluster
+
+        # NodePort (The Direct-to-Machine Way) method
+        # type = "NodePort" # 💡 Using NodePort for external access to the service through a specific port on each node
+        # Ensures traffic hits pods on the landing node directly, reducing network jitter
+        # external_traffic_policy = "Local" 
     }
 }
+
+# 💡 Ingress Resource for gRPC HTTP/2 Traffic Routing with load balancer
+# resource "kubernetes_ingress" "explore_service" {
+#     metadata {
+#         name      = "explore-service-ingress"
+#         namespace = "default"
+#         annotations = {
+#             # FORCES the backend proxy connection to use pure gRPC (HTTP/2)
+#             "nginx.ingress.kubernetes.io/backend-protocol" = "GRPC"
+
+#             # DROPS all unencrypted HTTP traffic entirely (Only allows ALPN HTTP/2)
+#             "nginx.ingress.kubernetes.io/ssl-redirect" = "true"
+
+#             # CRITICAL FOR STREAMS: Prevents NGINX from cutting off long-lived grpc bidirectional streams
+#             "nginx.ingress.kubernetes.io/proxy-read-time" = "86400"
+#             "nginx.ingress.kubernetes.io/proxy-send-time" = "86400"
+
+#             # Removes unnecessary HTTP buffer headers that break strict grpc payloads
+#             "nginx.ingress.kubernetes.io/proxy-buffering" = "off"
+#         }
+#     }
+
+#     spec {
+#         ingress_class_name = "nginx"
+
+#         # Enforces TLS termination-mandatory for production grpc (HTTP/2)
+#         tls {
+#             hosts       = ["grpc.example.com"]
+#             secret_name = "explore-service-secret" 
+#         }
+
+#         rule {
+#             host = "grpc.example.com"
+
+#             # Note: K8s schema naming dictates the use of the "http" block here,
+#             # but the annotations above redefine the entire server block to run on pure grpc.
+#             http {
+#                 path {
+#                     # Catch-all for gRPC packages (Matches: /PackageName.ServiceName/MethodName)
+#                     path      = "/"
+#                     path_type = "Prefix"
+
+#                     backend {
+#                         service {
+#                             name = kubernetes_service_v1.grpc_backend_service.metadata[0].name
+#                             port {
+#                                 number = 50051 # GRPC Port
+#                             }
+#                         }
+#                     }
+#                 }
+#             }
+#         }
+#     }
+# }

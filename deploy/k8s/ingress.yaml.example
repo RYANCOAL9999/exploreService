@@ -1,0 +1,38 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: explore-service-ingress
+  namespace: default
+  annotations:
+    # FORCES the backend proxy connection to use pure gRPC (HTTP/2)
+    nginx.ingress.kubernetes.io/backend-protocol: "GRPC"
+
+    # DROPS all unencrypted HTTP traffic entirely (Only allows ALPN HTTP/2)
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+
+    # CRITICAL FOR STREAMS: Prevents NGINX from cutting off long-lived grpc bidirectional streams
+    nginx.ingress.kubernetes.io/proxy-read-time: "86400"
+    nginx.ingress.kubernetes.io/proxy-send-time: "86400"
+
+    # Removes unnecessary HTTP buffer headers that break strict grpc payloads
+    nginx.ingress.kubernetes.io/proxy-buffering: "off"
+spec:
+  ingressClassName: nginx 
+
+  # Enforces TLS termination-mandatory for production grpc (HTTP/2)
+  tls:
+    - hosts:
+        - grpc.example.com
+      secretName: explore-service-secret
+  
+  rules:
+    - host: grpc.example.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: explore-service-service 
+                port:
+                  number: 50051 # GRPC Port
