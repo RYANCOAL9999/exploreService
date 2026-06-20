@@ -707,6 +707,10 @@ func TestPutDecision_ConcurrencyDeflection_Success(t *testing.T) {
 	db := setupTestDB(t)
 	h := NewExploreHandler(db)
 
+	// Pre-warm phase: Inject a dummy record to ensure the SQLite schema and connection
+	// handles are completely initialized before the massive concurrent flood hits.
+	_ = db.Create(&model.Decision{ActorUserID: "warm_up", RecipientUserID: "warm_up", LikedRecipient: false})
+
 	// =================================================================================================
 	// 2: Concurrency Mechanics Setup
 	// =================================================================================================
@@ -724,7 +728,6 @@ func TestPutDecision_ConcurrencyDeflection_Success(t *testing.T) {
 	var structuralSuccessCount int32
 	var loadSheddingDeflectedCount int32
 	var otherErrorCount int32
-
 	var counterMutex sync.Mutex
 
 	// =================================================================================================
@@ -741,12 +744,19 @@ func TestPutDecision_ConcurrencyDeflection_Success(t *testing.T) {
 				LikedRecipient:  true,
 			}
 
-			// Execute gRPC call directly against the rate-limiting handler logic
+			// Block here until the start barrier is unlinked to trigger real immediate concurrency
+			<-startBarrier
+
+			// CRITICAL TEST ADJUSTMENT:
+			// In production, PutDecision applies a strict 50ms timeout via context isolation.
+			// However, SQLite is single-threaded and locks the entire datastore on writes.
+			// 100 immediate concurrent writes causes lock starvation that breaks SQLite memory state.
+			// We pass an open context here to isolate and test ONLY the semaphore rate-limiting wall.
 			_, err := h.PutDecision(context.Background(), req)
 
 			// Thread-safe state collection phase
 			counterMutex.Lock()
-			defer counterMutex.Unlock()
+			// defer counterMutex.Unlock()
 
 			if err == nil {
 				structuralSuccessCount++
@@ -759,6 +769,9 @@ func TestPutDecision_ConcurrencyDeflection_Success(t *testing.T) {
 					otherErrorCount++
 				}
 			}
+
+			counterMutex.Unlock()
+
 		}(i)
 	}
 
