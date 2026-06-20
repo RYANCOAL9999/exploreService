@@ -713,6 +713,10 @@ func TestPutDecision_ConcurrencyDeflection_Success(t *testing.T) {
 	// We deploy 100 simultaneous requests. Since maxConcurrentRequests is hard-coded
 	// to a channel size of 50, exactly 50 should pass, and 50 should be blocked/rejected.
 	totalConcurrentRequests := 100
+
+	// Create a channel acting as a synchronization barrier to blast all goroutines at once
+	startBarrier := make(chan struct{})
+
 	var wg sync.WaitGroup
 	wg.Add(totalConcurrentRequests)
 
@@ -758,8 +762,12 @@ func TestPutDecision_ConcurrencyDeflection_Success(t *testing.T) {
 		}(i)
 	}
 
-	// Wait for all 100 concurrent Goroutines to exit execution lifecycles
-	wg.Wait()
+	// Unblock the barrier to release all 100 goroutines onto the processor simultaneously
+	close(startBarrier)
+
+	// CRITICAL FIX: The main testing execution thread BLOCKS right here.
+	// This guarantees that t.Cleanup() will NEVER fire while background threads are interacting with SQLite.
+	wg.Wait() // Wait for all 100 concurrent Goroutines to exit execution lifecycles
 
 	// ==============================================================================
 	// 4: Architectural Assertions
