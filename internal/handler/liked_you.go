@@ -170,7 +170,7 @@ func (h *ExploreHandler) ListNewLikedYou(ctx context.Context, req *pb.ListLikedY
 
 	//*******************************New Starting***************************************************************************************************************************//
 	// Over-fetch to mitigate data reduction caused by in-memory filtering.
-	fetchSize := pageSize * 2
+	fetchSize := pageSize * 5
 
 	// ==============================================================================================================================
 	// Step 1: Lookup Table 1 — Fetch candidate decisions (Single table scan, NO JOIN)
