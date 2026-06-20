@@ -29,6 +29,22 @@ func setupTestDB(t *testing.T) *gorm.DB {
 		t.Fatalf("failed to connect to in-memory sqlite db: %v", err)
 	}
 
+	// ------------------------------------------------------------------------------
+	// CRITICAL CONCURRENCY FIX FOR IN-MEMORY SQLITE:
+	// ------------------------------------------------------------------------------
+	// Under 'cache=private', any new connection opened by GORM's connection pool
+	// allocates a completely separate memory block that lacks the migrated tables.
+	// We force GORM to reuse exactly ONE single connection for the entire test scope.
+	sqlDB, err := db.DB()
+	if err != nil {
+		t.Fatalf("failed to extract generic sql.DB from gorm: %v", err)
+	}
+
+	// Enforce single-connection boundary to eliminate 'no such table' race conditions
+	sqlDB.SetMaxIdleConns(1)
+	sqlDB.SetMaxOpenConns(1)
+	sqlDB.SetConnMaxLifetime(time.Hour)
+
 	// Migrate the schema just like we do in production Postgres
 	err = db.AutoMigrate(&model.Decision{})
 	if err != nil {
@@ -37,7 +53,7 @@ func setupTestDB(t *testing.T) *gorm.DB {
 
 	// Close the connection after the test completes to release the in-memory DB
 	t.Cleanup(func() {
-		sqlDB, _ := db.DB()
+		// sqlDB, _ := db.DB()
 		sqlDB.Close()
 	})
 
