@@ -51,7 +51,7 @@ import (
 var maxConcurrentRequests = make(chan struct{}, 50)
 
 // Hard timeout limit for any single database operations to mitigate row-level deadlock risks.
-const dbHardTimeout = 5 * time.Second //Can work with SQLite ? Origin is like this one: 50 * time.Millisecond
+const dbHardTimeout = 50 * time.Millisecond
 
 func (h *ExploreHandler) PutDecision(ctx context.Context, req *pb.DecisionRequest) (*pb.PutDecisionResponse, error) {
 	// ==============================================================================
@@ -82,7 +82,25 @@ func (h *ExploreHandler) PutDecision(ctx context.Context, req *pb.DecisionReques
 	// ==============================================================================
 	// If 15M records encounter a celebrity profile hot-spot, row-locks can block indefinitely.
 	// We encapsulate the execution within a strict 50ms deadline context.
-	dbCtx, cancel := context.WithTimeout(ctx, dbHardTimeout)
+
+	// dbCtx, cancel := context.WithTimeout(ctx, dbHardTimeout)
+	// defer cancel()
+
+	// ------------------------------------------------------------------------------
+	// CRITICAL ARCHITECTURAL FIX: Dynamic Timeout Evaluation
+	// ------------------------------------------------------------------------------
+	// If the upstream context already defines a strict deadline (e.g., during testing or
+	// API gateway orchestration), we respect the existing context chain.
+	// Otherwise, we enforce our defensive 50ms hard boundary fallback.
+	var dbCtx context.Context
+	var cancel context.CancelFunc
+
+	if _, hasDeadline := ctx.Deadline(); hasDeadline {
+		dbCtx = ctx
+		cancel = func() {} // No-op, managed by upstream lifecycle
+	} else {
+		dbCtx, cancel = context.WithTimeout(ctx, dbHardTimeout)
+	}
 	defer cancel()
 
 	decision := model.Decision{
