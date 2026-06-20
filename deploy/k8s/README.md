@@ -18,7 +18,7 @@ To protect sensitive infrastructure endpoints and credentials, the active config
 Navigate to the deployment directory and copy the `.example` files:
 
 ```bash
-cd .github/deploy/
+cd deploy/k8s/
 cp secret.yaml.example secret.yaml
 cp deployment.yaml.example deployment.yaml
 cp service.yaml.example service.yaml
