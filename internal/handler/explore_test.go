@@ -799,25 +799,27 @@ func TestPutDecision_ConcurrencyDeflection_Success(t *testing.T) {
 	wg.Wait() // Wait for all 100 concurrent Goroutines to exit execution lifecycles
 
 	// ==============================================================================
-	// 4: Architectural Assertions
+	// 4: Architectural Audit Logs & Assertions (Fixed for Dynamic Scheduling)
 	// ==============================================================================
 	t.Logf("[Stress Test Audit] Executed Requests: %d", totalConcurrentRequests)
 	t.Logf("[Stress Test Audit] Successfully Processed (Entered DB Slot): %d", structuralSuccessCount)
 	t.Logf("[Stress Test Audit] Shedded/Deflected via Semaphore Limit: %d", loadSheddingDeflectedCount)
 
 	// CRITICAL ENGINEERING INVARIANT VERIFICATIONS:
+	// ENGINEERING INVARIANT VERIFICATIONS:
 	// 1. Zero unknown internal exceptions must surface during massive load ingestion.
-	assert.Equal(t, int32(0), otherErrorCount, "The service must not emit unhandled backend failures during high concurrency.")
+	assert.Equal(t, int32(0), otherErrorCount, "The service must not emit unhandled backend failures.")
 
 	// 2. The sum of accepted entries and rejected items must exactly equal the injected load.
 	assert.Equal(t, int32(totalConcurrentRequests), structuralSuccessCount+loadSheddingDeflectedCount,
-		"Total processed and shed requests must match total concurrent input.")
+		"Total processed and shedded requests must match total concurrent input.")
 
-	// 3. Since the internal channel buffer is exactly 50, the success metrics should strictly equal 50.
-	assert.Equal(t, int32(50), structuralSuccessCount,
-		"The in-memory throttling wall failed to lock processing boundaries exactly at 50 concurrent requests.")
+	// 3. Since the buffer size is 50, at least 50 requests must successfully pass through.
+	// (Some extra requests may pass if early ones finish execution and vacate slots within micro-seconds).
+	assert.GreaterOrEqual(t, structuralSuccessCount, int32(50),
+		"The throttling wall let fewer than 50 requests pass simultaneously.")
 
-	// 4. Correspondingly, exactly 50 requests must be rejected to guarantee 6GB RAM pod stability.
-	assert.Equal(t, int32(50), loadSheddingDeflectedCount,
-		"The shedding architecture failed to deflect the exact delta of over-capacity requests.")
+	// 4. Correspondingly, load shedding MUST be actively triggered to deflect overflow components.
+	assert.Greater(t, loadSheddingDeflectedCount, int32(0),
+		"The shedding architecture failed to trigger load shedding during a 100-request spike.")
 }
