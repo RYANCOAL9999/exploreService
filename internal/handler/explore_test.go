@@ -747,12 +747,12 @@ func TestPutDecision_ConcurrencyDeflection_Success(t *testing.T) {
 			// Block here until the start barrier is unlinked to trigger real immediate concurrency
 			<-startBarrier
 
-			// CRITICAL TEST ADJUSTMENT:
-			// In production, PutDecision applies a strict 50ms timeout via context isolation.
-			// However, SQLite is single-threaded and locks the entire datastore on writes.
-			// 100 immediate concurrent writes causes lock starvation that breaks SQLite memory state.
-			// We pass an open context here to isolate and test ONLY the semaphore rate-limiting wall.
-			_, err := h.PutDecision(context.Background(), req)
+			// Inject a generous 5-second timeout context block.
+			// This grants SQLite enough headroom to process single-threaded serial locks
+			// in CI VMs, completely avoiding the catastrophic internal driver crashes.
+			testCtx, testCancel := context.WithTimeout(context.Background(), 5*time.Second)
+			_, err := h.PutDecision(testCtx, req)
+			testCancel() // Prevent context leakage
 
 			// Thread-safe state collection phase
 			counterMutex.Lock()
