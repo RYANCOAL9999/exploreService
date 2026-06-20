@@ -51,7 +51,7 @@ import (
 var maxConcurrentRequests = make(chan struct{}, 50)
 
 // Hard timeout limit for any single database operations to mitigate row-level deadlock risks.
-const dbHardTimeout = 50 * time.Millisecond
+const dbHardTimeout = 5 * time.Second //Can work with SQLite ? Origin is like this one: 50 * time.Millisecond
 
 func (h *ExploreHandler) PutDecision(ctx context.Context, req *pb.DecisionRequest) (*pb.PutDecisionResponse, error) {
 	// ==============================================================================
