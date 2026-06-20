@@ -684,6 +684,10 @@ func TestListNewLikedYou_UnderfilledPage_Bug(t *testing.T) {
 		t.Logf("[Test Audit] Next Pagination Token Generated: %s", token)
 	}
 
+	if len(resp.GetLikers()) == 0 {
+		t.Errorf("FAIL: The response list is empty. Truncation bug reproduced!")
+		return
+	}
 	// This assertion highlights the pagination truncation issue on your original code layout.
 	assert.NotEmpty(t, resp.GetLikers(), "The response list must not return empty when older eligible records are present in the datastore.")
 	assert.Equal(t, validActorID, resp.GetLikers()[0].ActorId, "The processor failed to fetch and append the valid candidate record.")
