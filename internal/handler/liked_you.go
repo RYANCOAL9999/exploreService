@@ -170,7 +170,7 @@ func (h *ExploreHandler) ListNewLikedYou(ctx context.Context, req *pb.ListLikedY
 
 	//*******************************New Starting***************************************************************************************************************************//
 	// Over-fetch to mitigate data reduction caused by in-memory filtering.
-	fetchSize := pageSize * 2
+	fetchSize := pageSize * 5
 
 	// ==============================================================================================================================
 	// Step 1: Lookup Table 1 — Fetch candidate decisions (Single table scan, NO JOIN)
@@ -267,20 +267,14 @@ func (h *ExploreHandler) ListNewLikedYou(ctx context.Context, req *pb.ListLikedY
 	// 2. The database raw records match the fetchSize, indicating more data might exist for filtering.
 	// ==============================================================================================================================
 	if len(candidateDecisions) == fetchSize || loopBrokeEarly {
+		// If the response is saturated up to PageSize, cursor points to the last returned record.
+		// If memory-filtering emptied the page, we advance using the last scanned database element.
+		var lastRecord model.Decision = candidateDecisions[len(candidateDecisions)-1]
 		if len(decisions) > 0 {
-			// Safe even when loopBrokeEarly: any unprocessed tail in candidateDecisions sorts
-			// strictly after (older than) the last returned decision, so it'll be re-fetched
-			// and re-checked on the next page — nothing gets skipped.
-			last := decisions[len(decisions)-1]
-			t := encodeCursor(cursor{Time: last.CreatedAt, ID: last.ID})
-			nextToken = &t
-		} else {
-			// decisions empty implies loopBrokeEarly is false (can't break early with zero
-			// entries when pageSize > 0), so this branch only triggers via condition
-			last := candidateDecisions[len(candidateDecisions)-1]
-			t := encodeCursor(cursor{Time: last.CreatedAt, ID: last.ID})
-			nextToken = &t
+			lastRecord = decisions[len(decisions)-1]
 		}
+		t := encodeCursor(cursor{Time: lastRecord.CreatedAt, ID: lastRecord.ID})
+		nextToken = &t
 	}
 
 	return &pb.ListLikedYouResponse{

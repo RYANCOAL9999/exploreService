@@ -4,12 +4,16 @@ import (
 	"context"
 	"fmt"
 	"strconv"
+	"sync"
 	"testing"
 	"time"
 
 	"exploreService/internal/model"
 	"exploreService/pb"
 
+	"github.com/stretchr/testify/assert"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 )
@@ -25,6 +29,22 @@ func setupTestDB(t *testing.T) *gorm.DB {
 		t.Fatalf("failed to connect to in-memory sqlite db: %v", err)
 	}
 
+	// ------------------------------------------------------------------------------
+	// CRITICAL CONCURRENCY FIX FOR IN-MEMORY SQLITE:
+	// ------------------------------------------------------------------------------
+	// Under 'cache=private', any new connection opened by GORM's connection pool
+	// allocates a completely separate memory block that lacks the migrated tables.
+	// We force GORM to reuse exactly ONE single connection for the entire test scope.
+	sqlDB, err := db.DB()
+	if err != nil {
+		t.Fatalf("failed to extract generic sql.DB from gorm: %v", err)
+	}
+
+	// Enforce single-connection boundary to eliminate 'no such table' race conditions
+	sqlDB.SetMaxIdleConns(1)
+	sqlDB.SetMaxOpenConns(1)
+	sqlDB.SetConnMaxLifetime(time.Hour)
+
 	// Migrate the schema just like we do in production Postgres
 	err = db.AutoMigrate(&model.Decision{})
 	if err != nil {
@@ -33,21 +53,23 @@ func setupTestDB(t *testing.T) *gorm.DB {
 
 	// Close the connection after the test completes to release the in-memory DB
 	t.Cleanup(func() {
-		sqlDB, _ := db.DB()
+		// sqlDB, _ := db.DB()
 		sqlDB.Close()
 	})
 
 	return db
 }
 
-// ==============================================================================
+// =====================================================================================================
 // CASE A: Decision Overwrite Test
-// ==============================================================================
+// =====================================================================================================
 // This test ensures that when an actor changes their mind and submits a new
 // decision for the same recipient, the old record is elegantly overwritten (Upsert)
 // rather than duplicating rows or throwing a unique constraint error.
 func TestPutDecision_Overwrite(t *testing.T) {
+	// =================================================================================================
 	// 1. Setup isolated test environment
+	// =================================================================================================
 	db := setupTestDB(t)
 	h := NewExploreHandler(db)
 	ctx := context.Background()
@@ -55,7 +77,9 @@ func TestPutDecision_Overwrite(t *testing.T) {
 	actorID := "user_alice"
 	recipientID := "user_bob"
 
+	// =================================================================================================
 	// 2. First Decision: Alice PASSES Bob (LikedRecipient = false)
+	// =================================================================================================
 	firstReq := &pb.DecisionRequest{
 		ActorUserId:     actorID,
 		RecipientUserId: recipientID,
@@ -68,7 +92,9 @@ func TestPutDecision_Overwrite(t *testing.T) {
 		t.Fatalf("First PutDecision failed: %v", err)
 	}
 
-	// Verify database state after first decision
+	// =================================================================================================
+	// 3. Verify database state after first decision
+	// =================================================================================================
 	var count int64
 	db.Model(&model.Decision{}).Where("actor_user_id = ? AND recipient_user_id = ?", actorID, recipientID).Count(&count)
 	if count != 1 {
@@ -81,7 +107,9 @@ func TestPutDecision_Overwrite(t *testing.T) {
 		t.Errorf("Expected LikedRecipient to be false, got true")
 	}
 
-	// 3. Second Decision (Overwrite): Alice changes her mind and LIKES Bob (LikedRecipient = true)
+	// =================================================================================================
+	// 4. Second Decision (Overwrite): Alice changes her mind and LIKES Bob (LikedRecipient = true)
+	// =================================================================================================
 	secondReq := &pb.DecisionRequest{
 		ActorUserId:     actorID,
 		RecipientUserId: recipientID,
@@ -93,7 +121,9 @@ func TestPutDecision_Overwrite(t *testing.T) {
 		t.Fatalf("Second PutDecision (overwrite) failed: %v", err)
 	}
 
-	// 4. Critical Verifications for Overwrite Behavior
+	// =================================================================================================
+	// 5. Critical Verifications for Overwrite Behavior
+	// =================================================================================================
 	// Total rows for this pair must STILL be exactly 1 (No duplicate records!)
 	db.Model(&model.Decision{}).Where("actor_user_id = ? AND recipient_user_id = ?", actorID, recipientID).Count(&count)
 	if count != 1 {
@@ -106,7 +136,9 @@ func TestPutDecision_Overwrite(t *testing.T) {
 		t.Errorf("Update failed: Expected LikedRecipient to be overwritten to true, but remained false")
 	}
 
-	// 5. Verification for MutualLikes status
+	// =================================================================================================
+	// 6. Verification for MutualLikes status
+	// =================================================================================================
 	// We set LikedRecipient = true here to pass the handler's outer guard clause,
 	// allowing the system to query the DB and confirm that Bob hasn't liked Alice back yet.
 	mutualReq := &pb.DecisionRequest{
@@ -127,22 +159,25 @@ func TestPutDecision_Overwrite(t *testing.T) {
 
 }
 
-// ==============================================================================
+// =====================================================================================================
 // CASE B: Mutual Like Detection Test
-// ==============================================================================
+// =====================================================================================================
 // This test verifies the match-making engine. When User B likes User A,
 // and subsequently User A likes User B, the system must instantly detect
 // this overlap and return MutualLikes = true in the gRPC response.
 func TestPutDecision_MutualLikeDetection(t *testing.T) {
+	// =================================================================================================
 	// 1. Setup isolated test environment
+	// =================================================================================================
 	db := setupTestDB(t)
 	h := NewExploreHandler(db)
 	ctx := context.Background()
-
 	userA := "user_alpha"
 	userB := "user_beta"
 
+	// =================================================================================================
 	// 2. Step 1: User B LIKES User A first
+	// =================================================================================================
 	// We seed this directly into the DB to represent an existing historical state
 	historicalLike := model.Decision{
 		ActorUserID:     userB,
@@ -153,7 +188,9 @@ func TestPutDecision_MutualLikeDetection(t *testing.T) {
 		t.Fatalf("failed to seed historical like from B to A: %v", err)
 	}
 
+	// =================================================================================================
 	// 3. Step 2: User A now LIKES User B via gRPC call
+	// =================================================================================================
 	reqA := &pb.DecisionRequest{
 		ActorUserId:     userA,
 		RecipientUserId: userB,
@@ -165,7 +202,9 @@ func TestPutDecision_MutualLikeDetection(t *testing.T) {
 		t.Fatalf("PutDecision from A to B failed: %v", err)
 	}
 
+	// =================================================================================================
 	// 4. Critical Verification for Match-Making
+	// =================================================================================================
 	// Both users have liked each other; MutualLikes must return true.
 	mutualResp, err := h.MutualLikes(ctx, reqA)
 	if err != nil {
@@ -177,7 +216,9 @@ func TestPutDecision_MutualLikeDetection(t *testing.T) {
 		t.Errorf("Logic Error: MutualLikes triggered even though Actor chose to PASS")
 	}
 
+	// =================================================================================================
 	// 5. Edge Case Verification: Overwrite to PASS
+	// =================================================================================================
 	// If User A changes their mind and passes on User B, MutualLikes must immediately return false.
 	passReq := &pb.DecisionRequest{
 		ActorUserId:     userA,
@@ -203,21 +244,25 @@ func TestPutDecision_MutualLikeDetection(t *testing.T) {
 
 }
 
-// ==============================================================================
-// CASE D: Heavy User Cursor Pagination Test
-// ==============================================================================
+// =====================================================================================================
+// CASE C: Heavy User Cursor Pagination Test
+// =====================================================================================================
 // This test challenges the scale requirement by simulating a user with multiple
 // likes. It verifies that ListLikedYou returns results in reverse chronological
 // order (newest first), properly generates an encoded NextPaginationToken, and
 // allows seamless paging without using performance-killing SQL OFFSETS.
 func TestListLikedYou_CursorPagination(t *testing.T) {
+	// =================================================================================================
+	// 1. Setup isolated test environment
+	// =================================================================================================
 	db := setupTestDB(t)
 	h := NewExploreHandler(db)
 	ctx := context.Background()
-
 	targetUser := "user_celebrity"
 
-	// 1. Seed 5 historical likes with distinct, ascending timestamps
+	// =================================================================================================
+	// 2. Seed 5 historical likes with distinct, ascending timestamps
+	// =================================================================================================
 	// Likers: user_1 (oldest) -> user_5 (newest)
 	baseTime := time.Now().Truncate(time.Second)
 	for i := 1; i <= 5; i++ {
@@ -235,10 +280,9 @@ func TestListLikedYou_CursorPagination(t *testing.T) {
 	// Paginate with a page size of 2 to test multiple pages
 	pswithTwo := uint32(2)
 
-	// --------------------------------------------------------------------------
-	// PAGE 1: Fetch first 2 records (Should be user_5 and user_4)
-	// --------------------------------------------------------------------------
-
+	// =================================================================================================
+	// 3. PAGE 1: Fetch first 2 records (Should be user_5 and user_4)
+	// =================================================================================================
 	page1Req := &pb.ListLikedYouRequest{
 		RecipientUserId: targetUser,
 		PageSize:        &pswithTwo,
@@ -264,9 +308,9 @@ func TestListLikedYou_CursorPagination(t *testing.T) {
 		t.Fatalf("Expected a valid NextPaginationToken on Page 1, got empty")
 	}
 
-	// --------------------------------------------------------------------------
-	// PAGE 2: Fetch next 2 records using token1 (Should be user_3 and user_2)
-	// --------------------------------------------------------------------------
+	// =================================================================================================
+	// 4. PAGE 2: Fetch next 2 records using token1 (Should be user_3 and user_2)
+	// =================================================================================================
 	page2Req := &pb.ListLikedYouRequest{
 		RecipientUserId: targetUser,
 		PageSize:        &pswithTwo,
@@ -293,9 +337,9 @@ func TestListLikedYou_CursorPagination(t *testing.T) {
 		t.Fatalf("Expected a valid NextPaginationToken on Page 2, got empty")
 	}
 
-	// --------------------------------------------------------------------------
-	// PAGE 3: Fetch final record using token2 (Should be user_1)
-	// --------------------------------------------------------------------------
+	// =================================================================================================
+	// 5. PAGE 3: Fetch final record using token2 (Should be user_1)
+	// =================================================================================================
 	page3Req := &pb.ListLikedYouRequest{
 		RecipientUserId: targetUser,
 		PageSize:        &pswithTwo,
@@ -321,23 +365,25 @@ func TestListLikedYou_CursorPagination(t *testing.T) {
 	}
 }
 
-// ==============================================================================
-// CASE C: Isolated Unit Tests for MutualLikes API
-// ==============================================================================
+// =====================================================================================================
+// CASE D: Isolated Unit Tests for MutualLikes API
+// =====================================================================================================
 // This test suite micro-tests the MutualLikes handler in isolation by directly
 // seeding varied state matrices into the database, verifying the early guard
 // clause, and checking the robustness of the read-only relation lookup.
 func TestMutualLikes_IsolatedScenarios(t *testing.T) {
+	// =================================================================================================
+	// 1. Setup isolated test environment
+	// =================================================================================================
 	db := setupTestDB(t)
 	h := NewExploreHandler(db)
 	ctx := context.Background()
-
 	userA := "user_alpha"
 	userB := "user_beta"
 
-	// --------------------------------------------------------------------------
-	// Scenario 1: Clean Slate (Zero Records in Database)
-	// --------------------------------------------------------------------------
+	// =================================================================================================
+	// 2. Scenario 1: Clean Slate (Zero Records in Database)
+	// =================================================================================================
 	// Ensures that if two users have never seen each other, it returns false safely.
 	cleanReq := &pb.DecisionRequest{
 		ActorUserId:     userA,
@@ -352,9 +398,9 @@ func TestMutualLikes_IsolatedScenarios(t *testing.T) {
 		t.Errorf("Scenario 1 Error: Expected false on a clean database, got true")
 	}
 
-	// --------------------------------------------------------------------------
-	// Scenario 2: Early Guard Clause Verification (The "Pass" Optimization)
-	// --------------------------------------------------------------------------
+	// =================================================================================================
+	// 3. Scenario 2: Early Guard Clause Verification (The "Pass" Optimization)
+	// =================================================================================================
 	// Even if User B historically LIKED User A, if User A invokes this with LikedRecipient = false,
 	// the code MUST trigger the early if-guard, short-circuit, and return false without hitting the DB.
 	historicalLike := model.Decision{
@@ -382,9 +428,9 @@ func TestMutualLikes_IsolatedScenarios(t *testing.T) {
 	// Clean database state for the next deterministic scenario
 	db.Exec("DELETE FROM decisions")
 
-	// --------------------------------------------------------------------------
-	// Scenario 3: Asymmetric Dislike State (Double-PASS)
-	// --------------------------------------------------------------------------
+	// =================================================================================================
+	// 4. Scenario 3: Asymmetric Dislike State (Double-PASS)
+	// =================================================================================================
 	// If both users explicitly chose to PASS on each other in the database,
 	// MutualLikes must return false even if the request payload carries LikedRecipient = true.
 	dislikeRecords := []model.Decision{
@@ -409,21 +455,25 @@ func TestMutualLikes_IsolatedScenarios(t *testing.T) {
 	}
 }
 
-// ==============================================================================
-// CASE D: New Liked You Exclusion Test
-// ==============================================================================
+// =====================================================================================================
+// CASE E: New Liked You Exclusion Test
+// =====================================================================================================
 // This test verifies that ListNewLikedYou only displays records of users who
 // liked the recipient, while strictly excluding individuals whom the recipient
 // has already liked back (Mutual Matches). This prevents redundant data on
 // incoming match feeds.
 func TestListNewLikedYou_ExclusionFilter(t *testing.T) {
+	// =================================================================================================
+	// 1. Setup isolated test environment
+	// =================================================================================================
 	db := setupTestDB(t)
 	h := NewExploreHandler(db)
 	ctx := context.Background()
-
 	targetUser := "user_recipient"
 
-	// Scene 1: user_new_liker LIKES targetUser (Target user has NOT reacted back yet)
+	// =================================================================================================
+	// 2. Scene 1: user_new_liker LIKES targetUser (Target user has NOT reacted back yet)
+	// =================================================================================================
 	newLiker := model.Decision{
 		ActorUserID:     "user_new_liker",
 		RecipientUserID: targetUser,
@@ -434,7 +484,9 @@ func TestListNewLikedYou_ExclusionFilter(t *testing.T) {
 		t.Fatalf("failed to seed new liker: %v", err)
 	}
 
-	// Scene 2: user_mutual_match LIKES targetUser, AND targetUser LIKES them back (Mutual Like)
+	// =================================================================================================
+	// 3. Scene 2: user_mutual_match LIKES targetUser, AND targetUser LIKES them back (Mutual Like)
+	// =================================================================================================
 	mutualLiker := model.Decision{
 		ActorUserID:     "user_mutual_match",
 		RecipientUserID: targetUser,
@@ -456,10 +508,9 @@ func TestListNewLikedYou_ExclusionFilter(t *testing.T) {
 		t.Fatalf("failed to seed target user counter-like: %v", err)
 	}
 
-	// --------------------------------------------------------------------------
-	// EXECUTE QUERY & VERIFY
-	// --------------------------------------------------------------------------
-
+	// =================================================================================================
+	// 4. EXECUTE QUERY & VERIFY
+	// =================================================================================================
 	// Set a large page size to ensure we get all potential likers in one response
 	pswith10 := uint32(10)
 
@@ -473,33 +524,41 @@ func TestListNewLikedYou_ExclusionFilter(t *testing.T) {
 		t.Fatalf("ListNewLikedYou call failed: %v", err)
 	}
 
-	// Validation 1: The length of results must be EXACTLY 1
+	// =================================================================================================
+	// 5. Validation 1: The length of results must be EXACTLY 1
+	// =================================================================================================
 	if len(resp.GetLikers()) != 1 {
 		t.Fatalf("Filter Error: Expected exactly 1 new liker, but found %d in response", len(resp.GetLikers()))
 	}
 
-	// Validation 2: The remaining user MUST be "user_new_liker"
+	// =================================================================================================
+	// 6. Validation 2: The remaining user MUST be "user_new_liker"
+	// =================================================================================================
 	remainingActor := resp.GetLikers()[0].GetActorId()
 	if remainingActor != "user_new_liker" {
 		t.Errorf("Filter Mismatch: Expected 'user_new_liker' to be present, but found '%s' instead. Mutual match was not filtered out!", remainingActor)
 	}
 }
 
-// ==============================================================================
-// CASE E: Accurate Counting & Noise Isolation Test
-// ==============================================================================
+// =====================================================================================================
+// CASE F: Accurate Counting & Noise Isolation Test
+// =====================================================================================================
 // This test ensures that CountLikedYou returns a 100% precise calculation.
 // It injects various database noises (such as pass decisions and likes directed
 // to other users) and verifies that the counter filters them out completely,
 // leveraging the optimized database indexes.
 func TestCountLikedYou_NoiseIsolation(t *testing.T) {
+	// =================================================================================================
+	// 1. Setup isolated test environment
+	// =================================================================================================
 	db := setupTestDB(t)
 	h := NewExploreHandler(db)
 	ctx := context.Background()
-
 	targetUser := "user_popular"
 
-	// 1. Inject Valid Data: 2 distinct users LIKED targetUser
+	// =================================================================================================
+	// 2. Inject Valid Data: 2 distinct users LIKED targetUser
+	// =================================================================================================
 	validLike1 := model.Decision{
 		ActorUserID:     "user_fan_a",
 		RecipientUserID: targetUser,
@@ -513,7 +572,9 @@ func TestCountLikedYou_NoiseIsolation(t *testing.T) {
 	_ = db.Create(&validLike1)
 	_ = db.Create(&validLike2)
 
-	// 2. Inject Noise Type 1: A user PASSED targetUser (LikedRecipient = false)
+	// =================================================================================================
+	// 3. Inject Noise Type 1: A user PASSED targetUser (LikedRecipient = false)
+	// =================================================================================================
 	passNoise := model.Decision{
 		ActorUserID:     "user_hater",
 		RecipientUserID: targetUser,
@@ -521,7 +582,9 @@ func TestCountLikedYou_NoiseIsolation(t *testing.T) {
 	}
 	_ = db.Create(&passNoise)
 
-	// 3. Inject Noise Type 2: A user LIKED someone else entirely
+	// =================================================================================================
+	// 4. Inject Noise Type 2: A user LIKED someone else entirely
+	// =================================================================================================
 	wrongTargetNoise := model.Decision{
 		ActorUserID:     "user_fan_c",
 		RecipientUserID: "user_someone_else", // Different recipient, should NOT be counted!
@@ -529,9 +592,9 @@ func TestCountLikedYou_NoiseIsolation(t *testing.T) {
 	}
 	_ = db.Create(&wrongTargetNoise)
 
-	// --------------------------------------------------------------------------
-	// EXECUTE COUNTER & VERIFY
-	// --------------------------------------------------------------------------
+	// =================================================================================================
+	// 5. EXECUTE COUNTER & VERIFY
+	// =================================================================================================
 	req := &pb.CountLikedYouRequest{
 		RecipientUserId: targetUser,
 	}
@@ -547,4 +610,216 @@ func TestCountLikedYou_NoiseIsolation(t *testing.T) {
 		t.Errorf("Counting Error: Expected exactly %d likes for '%s', but got %d instead. Database noise leaked into the count!",
 			expectedCount, targetUser, resp.GetCount())
 	}
+}
+
+// =====================================================================================================
+// CASE G: ListNewLikedYou Underfilled Page Bug Test
+// =====================================================================================================
+// This test verifies the edge case where memory-filtering
+// causes empty pages despite more valid data existing
+// in the database due to hardcoded fetch limits.
+func TestListNewLikedYou_UnderfilledPage_Bug(t *testing.T) {
+	// =================================================================================================
+	// 1. Setup isolated test environment
+	// =================================================================================================
+	db := setupTestDB(t)
+	h := NewExploreHandler(db)
+	ctx := context.Background()
+	recipientID := "target_user"
+	now := time.Now()
+
+	// =================================================================================================
+	// 2: Concurrency Mechanics Setup
+	// =================================================================================================
+	// Target PageSize is 2, creating a hardcoded fetchSize of 4 (PageSize * 2).
+	// We inject 5 total outbound records to trigger memory-filtering depletion.
+
+	// A. Generate 4 Mutual Matches (Users who liked me, and I liked them back)
+	// Chronologically sorted from T+4 down to T+1 (Newest to oldest)
+	for i := 1; i <= 4; i++ {
+		actorID := fmt.Sprintf("Mutual_Liker_%d", i)
+
+		// Inbound decision record: They liked me
+		err := db.Create(&model.Decision{
+			ActorUserID:     actorID,
+			RecipientUserID: recipientID,
+			LikedRecipient:  true,
+			CreatedAt:       now.Add(time.Duration(i) * time.Minute),
+		}).Error
+		assert.NoError(t, err)
+
+		// Outbound decision record: I liked them back (Simulating mutual match state)
+		err = db.Create(&model.Decision{
+			ActorUserID:     recipientID,
+			RecipientUserID: actorID,
+			LikedRecipient:  true,
+			CreatedAt:       now.Add(time.Duration(i) * time.Minute),
+		}).Error
+		assert.NoError(t, err)
+	}
+
+	// B. Generate the 5th oldest record: The only valid target
+	// (They liked me, but I have NOT liked them back). Created at T+0.
+	validActorID := "Valid_Liker_A"
+	err := db.Create(&model.Decision{
+		ActorUserID:     validActorID,
+		RecipientUserID: recipientID,
+		LikedRecipient:  true,
+		CreatedAt:       now,
+	}).Error
+	assert.NoError(t, err)
+
+	// Define page size as a local variable to safely acquire its pointer reference.
+	pageSizeVal := uint32(2)
+
+	// =================================================================================================
+	// 3. Execution & Structural Evaluation
+	// =================================================================================================
+	req := &pb.ListLikedYouRequest{
+		RecipientUserId: recipientID,
+		PageSize:        &pageSizeVal, // fetchSize inside code will evaluate to 2 * 2 = 4
+	}
+
+	resp, err := h.ListNewLikedYou(ctx, req)
+	assert.NoError(t, err)
+
+	// =================================================================================================
+	// Step 4: Engineering Analysis & Assertions
+	// =================================================================================================
+	// CRITICAL SYSTEM ANALYSIS:
+	// Due to the hard LIMIT(4) clause enforced during Step 1's query execution,
+	// the database scanner only loads the 4 newest mutual-match records.
+	// They are fully stripped out during Step 3's high-speed hash map filter.
+	//
+	// The valid 5th record ("Valid_Liker_A") is left untouched in the database,
+	// causing an empty page result while returning a NextPaginationToken.
+	t.Logf("[Test Audit] Response Likers Array Length: %d", len(resp.GetLikers()))
+
+	token := resp.GetNextPaginationToken()
+	if token != "" {
+		t.Logf("[Test Audit] Next Pagination Token Generated: %s", token)
+	}
+
+	if len(resp.GetLikers()) == 0 {
+		t.Errorf("FAIL: The response list is empty. Truncation bug reproduced!")
+		return
+	}
+	// This assertion highlights the pagination truncation issue on your original code layout.
+	assert.NotEmpty(t, resp.GetLikers(), "The response list must not return empty when older eligible records are present in the datastore.")
+	assert.Equal(t, validActorID, resp.GetLikers()[0].ActorId, "The processor failed to fetch and append the valid candidate record.")
+
+}
+
+// =====================================================================================================
+// CASE H: Put Decision Concurrency Deflection Success Test
+// =====================================================================================================
+// This test executes a heavy concurrent stress test to verify that
+// the node-level semaphore strictly caps active database operations at 50,
+// deflecting overflow traffic gracefully to stabilize the 6GB RAM profile.
+func TestPutDecision_ConcurrencyDeflection_Success(t *testing.T) {
+	// =================================================================================================
+	// 1. Setup isolated test environment
+	// =================================================================================================
+	db := setupTestDB(t)
+	h := NewExploreHandler(db)
+
+	// Pre-warm phase: Inject a dummy record to ensure the SQLite schema and connection
+	// handles are completely initialized before the massive concurrent flood hits.
+	_ = db.Create(&model.Decision{ActorUserID: "warm_up", RecipientUserID: "warm_up", LikedRecipient: false})
+
+	// =================================================================================================
+	// 2: Concurrency Mechanics Setup
+	// =================================================================================================
+	// We deploy 100 simultaneous requests. Since maxConcurrentRequests is hard-coded
+	// to a channel size of 50, exactly 50 should pass, and 50 should be blocked/rejected.
+	totalConcurrentRequests := 100
+
+	// Create a channel acting as a synchronization barrier to blast all goroutines at once
+	startBarrier := make(chan struct{})
+
+	var wg sync.WaitGroup
+	wg.Add(totalConcurrentRequests)
+
+	// Thread-safe counters to track architectural output states
+	var structuralSuccessCount int32
+	var loadSheddingDeflectedCount int32
+	var otherErrorCount int32
+	var counterMutex sync.Mutex
+
+	// =================================================================================================
+	// 3. Executing the Concurrent Flood
+	// =================================================================================================
+	for i := 0; i < totalConcurrentRequests; i++ {
+		go func(index int) {
+			defer wg.Done()
+
+			// Formulate completely distinct decision records to avoid unique constraint violations
+			req := &pb.DecisionRequest{
+				ActorUserId:     fmt.Sprintf("actor_%d", index),
+				RecipientUserId: fmt.Sprintf("recipient_%d", index),
+				LikedRecipient:  true,
+			}
+
+			// Block here until the start barrier is unlinked to trigger real immediate concurrency
+			<-startBarrier
+
+			// Inject a generous 5-second timeout context block.
+			// This grants SQLite enough headroom to process single-threaded serial locks
+			// in CI VMs, completely avoiding the catastrophic internal driver crashes.
+			testCtx, testCancel := context.WithTimeout(context.Background(), 5*time.Second)
+			_, err := h.PutDecision(testCtx, req)
+			testCancel() // Prevent context leakage
+
+			// Thread-safe state collection phase
+			counterMutex.Lock()
+			// defer counterMutex.Unlock()
+
+			if err == nil {
+				structuralSuccessCount++
+			} else {
+				st, ok := status.FromError(err)
+				if ok && st.Code() == codes.ResourceExhausted {
+					loadSheddingDeflectedCount++
+				} else {
+					t.Logf("[Unexpected Failure] Received unexpected error code: %v - %s", st.Code(), st.Message())
+					otherErrorCount++
+				}
+			}
+
+			counterMutex.Unlock()
+
+		}(i)
+	}
+
+	// Unblock the barrier to release all 100 goroutines onto the processor simultaneously
+	close(startBarrier)
+
+	// CRITICAL FIX: The main testing execution thread BLOCKS right here.
+	// This guarantees that t.Cleanup() will NEVER fire while background threads are interacting with SQLite.
+	wg.Wait() // Wait for all 100 concurrent Goroutines to exit execution lifecycles
+
+	// ==============================================================================
+	// 4: Architectural Audit Logs & Assertions (Fixed for Dynamic Scheduling)
+	// ==============================================================================
+	t.Logf("[Stress Test Audit] Executed Requests: %d", totalConcurrentRequests)
+	t.Logf("[Stress Test Audit] Successfully Processed (Entered DB Slot): %d", structuralSuccessCount)
+	t.Logf("[Stress Test Audit] Shedded/Deflected via Semaphore Limit: %d", loadSheddingDeflectedCount)
+
+	// CRITICAL ENGINEERING INVARIANT VERIFICATIONS:
+	// ENGINEERING INVARIANT VERIFICATIONS:
+	// 1. Zero unknown internal exceptions must surface during massive load ingestion.
+	assert.Equal(t, int32(0), otherErrorCount, "The service must not emit unhandled backend failures.")
+
+	// 2. The sum of accepted entries and rejected items must exactly equal the injected load.
+	assert.Equal(t, int32(totalConcurrentRequests), structuralSuccessCount+loadSheddingDeflectedCount,
+		"Total processed and shedded requests must match total concurrent input.")
+
+	// 3. Since the buffer size is 50, at least 50 requests must successfully pass through.
+	// (Some extra requests may pass if early ones finish execution and vacate slots within micro-seconds).
+	assert.GreaterOrEqual(t, structuralSuccessCount, int32(50),
+		"The throttling wall let fewer than 50 requests pass simultaneously.")
+
+	// 4. Correspondingly, load shedding MUST be actively triggered to deflect overflow components.
+	assert.Greater(t, loadSheddingDeflectedCount, int32(0),
+		"The shedding architecture failed to trigger load shedding during a 100-request spike.")
 }

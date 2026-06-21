@@ -22,6 +22,8 @@ cd .github/deploy/
 cp secret.yaml.example secret.yaml
 cp deployment.yaml.example deployment.yaml
 cp service.yaml.example service.yaml
+# This is one is for enabling Load balancer, Please be carefully to control.
+cp ingress.yaml.example ingress.yaml
 ```
 
 ### Configuration Updates Required:
@@ -98,4 +100,10 @@ To completely tear down the microservice and its secret credentials from the clu
 kubectl delete -f deploy/k8s/service.yaml
 kubectl delete -f deploy/k8s/deployment.yaml
 kubectl delete -f deploy/k8s/secret.yaml
+```
+
+#### Special Item for Only allows specific IP range
+
+```bash
+kubectl patch svc <Your_Service_Name> -n <Namespace> -p '{"spec":{"load_balancer_source_ranges":["203.0.113.0/24"]}}'
 ```
